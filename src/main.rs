@@ -8,7 +8,8 @@ use gpui::{
     actions, div, img, point, prelude::*, px, relative, rgb, size, App, Application, Bounds,
     ClickEvent, Context, ElementId, FocusHandle, Image, KeyBinding, Menu, MenuItem, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, PathPromptOptions, Pixels, Point,
-    ScrollWheelEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    ScrollWheelEvent, SharedString, SystemMenuType, TitlebarOptions, Window, WindowBounds,
+    WindowOptions,
 };
 use media::{scan_browse, scan_folder_recursive, Entry, MediaKind};
 use prefs::Prefs;
@@ -1221,15 +1222,42 @@ fn main() {
             KeyBinding::new("cmd-d", ToggleSaved, Some("Gallery")),
             KeyBinding::new("0", ResetZoom, Some("Gallery")),
         ]);
-        cx.set_menus(vec![Menu {
-            name: "gallery".into(),
-            items: vec![
-                MenuItem::action("Open Folder…", OpenFolder),
-                MenuItem::action("Go Up", GoUp),
-                MenuItem::separator(),
-                MenuItem::action("Quit", Quit),
-            ],
-        }]);
+        cx.set_menus(vec![
+            Menu {
+                name: "gallery".into(),
+                items: vec![
+                    MenuItem::os_submenu("Services", SystemMenuType::Services),
+                    MenuItem::separator(),
+                    MenuItem::action("Quit", Quit),
+                ],
+            },
+            Menu {
+                name: "File".into(),
+                items: vec![
+                    MenuItem::action("Open Folder…", OpenFolder),
+                    MenuItem::action("Go Up", GoUp),
+                    MenuItem::separator(),
+                    MenuItem::action("Save Library", ToggleSaved),
+                ],
+            },
+            Menu {
+                name: "View".into(),
+                items: vec![
+                    MenuItem::action("Folders / Flat", ToggleFlat),
+                    MenuItem::separator(),
+                    MenuItem::action("Density Small", DensitySmall),
+                    MenuItem::action("Density Medium", DensityMedium),
+                    MenuItem::action("Density Large", DensityLarge),
+                ],
+            },
+            Menu {
+                name: "Playback".into(),
+                items: vec![
+                    MenuItem::action("Slideshow", ToggleSlideshow),
+                    MenuItem::action("Reset Zoom", ResetZoom),
+                ],
+            },
+        ]);
 
         let title = format!("gallery — {}", folder.display());
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
