@@ -1,6 +1,8 @@
 mod media;
 mod prefs;
 mod thumbs;
+#[cfg(target_os = "macos")]
+mod tray;
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
@@ -1276,5 +1278,12 @@ fn main() {
             |window, cx| cx.new(|cx| Gallery::new(folder.clone(), window, cx)),
         )
         .unwrap();
+
+        // Re-activate after the window exists so the macOS menu bar
+        // switches away from the parent (Terminal / IDE) to this app.
+        cx.activate(true);
+
+        #[cfg(target_os = "macos")]
+        tray::install();
     });
 }
