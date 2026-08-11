@@ -18,54 +18,125 @@ pub struct MediaItem {
     pub kind: MediaKind,
 }
 
-pub fn scan_folder_recursive(root: &Path) -> Vec<MediaItem> {
+#[derive(Clone)]
+pub struct FolderItem {
+    pub path: PathBuf,
+    pub name: SharedString,
+}
+
+#[derive(Clone)]
+pub enum Entry {
+    Folder(FolderItem),
+    Media(MediaItem),
+}
+
+impl Entry {
+    pub fn name(&self) -> &SharedString {
+        match self {
+            Self::Folder(f) => &f.name,
+            Self::Media(m) => &m.name,
+        }
+    }
+}
+
+fn is_hidden(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.starts_with('.'))
+        .unwrap_or(false)
+}
+
+fn media_kind(path: &Path) -> Option<MediaKind> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    if IMAGE_EXTS.iter().any(|e| *e == ext) {
+        Some(MediaKind::Image)
+    } else if VIDEO_EXTS.iter().any(|e| *e == ext) {
+        Some(MediaKind::Video)
+    } else {
+        None
+    }
+}
+
+/// Current-directory listing: subfolders first, then media in this folder only.
+pub fn scan_browse(dir: &Path) -> Vec<Entry> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+
+    let mut folders = Vec::new();
+    let mut media = Vec::new();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if is_hidden(&path) {
+            continue;
+        }
+        if path.is_dir() {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("folder")
+                .to_string();
+            folders.push(FolderItem {
+                path,
+                name: name.into(),
+            });
+        } else if path.is_file() {
+            if let Some(kind) = media_kind(&path) {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("untitled")
+                    .to_string();
+                media.push(MediaItem {
+                    path,
+                    name: name.into(),
+                    kind,
+                });
+            }
+        }
+    }
+
+    folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    media.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+    folders
+        .into_iter()
+        .map(Entry::Folder)
+        .chain(media.into_iter().map(Entry::Media))
+        .collect()
+}
+
+/// Flattened recursive media-only listing (no folder tiles).
+pub fn scan_folder_recursive(root: &Path) -> Vec<Entry> {
     let mut stack = vec![root.to_path_buf()];
-    let mut items = Vec::new();
+    let mut media = Vec::new();
 
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
-
         for entry in entries.flatten() {
             let path = entry.path();
-            let file_name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default();
-
-            if file_name.starts_with('.') {
+            if is_hidden(&path) {
                 continue;
             }
-
             if path.is_dir() {
                 stack.push(path);
                 continue;
             }
-
             if !path.is_file() {
                 continue;
             }
-
-            let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+            let Some(kind) = media_kind(&path) else {
                 continue;
             };
-            let ext = ext.to_ascii_lowercase();
-            let kind = if IMAGE_EXTS.iter().any(|e| *e == ext) {
-                MediaKind::Image
-            } else if VIDEO_EXTS.iter().any(|e| *e == ext) {
-                MediaKind::Video
-            } else {
-                continue;
-            };
-
             let rel = path
                 .strip_prefix(root)
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .replace('\\', "/");
-
-            items.push(MediaItem {
+            media.push(MediaItem {
                 path,
                 name: rel.into(),
                 kind,
@@ -73,6 +144,6 @@ pub fn scan_folder_recursive(root: &Path) -> Vec<MediaItem> {
         }
     }
 
-    items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-    items
+    media.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    media.into_iter().map(Entry::Media).collect()
 }

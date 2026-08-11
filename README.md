@@ -1,4 +1,4 @@
-# gallery
+# rusty gallery
 
 A fast, minimal photo/video gallery built with [GPUI](https://www.gpui.rs).
 
@@ -9,30 +9,30 @@ cargo run --release
 cargo run --release -- ~/Pictures
 ```
 
-Defaults to `./media` when no folder is passed.
+Opens the last recent folder when no path is passed (falls back to `./media`).
 
-## Features
+## What it does
 
-- Recursive folder scan (async, non-blocking)
-- Downscaled thumbnail cache
-- Folder picker (`Open` or ⌘O)
-- Grid density S / M / L (`1` `2` `3`)
-- Keyboard grid focus (arrows) · Enter / Space to open
-- Lightbox zoom (scroll) · pan (drag) · double-click / `0` to reset
-- Slideshow (`S` or toolbar) — 3s interval
+- **Folder browse** — subfolders appear as tiles; click to enter · Back / ⌘↑ to go up
+- **Flat mode** — show every nested media file in one grid (`F` or Folders/Flat toggle)
+- **Open Folder** — big button in the sidebar (also ⌘O)
+- **Saved + Recent** — pin libraries, jump back without re-picking
+- **Thumbnails** — downscaled disk cache
+- **Lightbox** — zoom, pan, slideshow
 - Videos open in the system player
 
 ## Controls
 
 | Input | Action |
 | --- | --- |
-| Click / Enter / Space | Open |
+| Open Folder / ⌘O | Pick a library |
+| ← Back / ⌘↑ / Backspace | Parent folder |
+| Save / ⌘D | Pin current library |
+| Folders / Flat / `F` | Browse vs recursive |
+| Click / Enter / Space | Open folder or media |
 | ← → ↑ ↓ | Focus grid / navigate lightbox |
 | Esc | Close lightbox |
-| Scroll | Zoom |
-| Drag | Pan (when zoomed) |
-| Double-click / `0` | Reset zoom |
-| `S` | Toggle slideshow |
+| Scroll / drag | Zoom / pan |
+| `S` | Slideshow |
 | `1` `2` `3` | Density |
-| ⌘O | Open folder |
 | ⌘Q | Quit |

@@ -1,15 +1,17 @@
 mod media;
+mod prefs;
 mod thumbs;
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use gpui::{
     actions, div, img, point, prelude::*, px, relative, rgb, size, App, Application, Bounds,
-    ClickEvent, Context, FocusHandle, Image, KeyBinding, Menu, MenuItem, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ObjectFit, PathPromptOptions, Pixels, Point, ScrollWheelEvent,
-    SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    ClickEvent, Context, ElementId, FocusHandle, Image, KeyBinding, Menu, MenuItem, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, PathPromptOptions, Pixels, Point,
+    ScrollWheelEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
-use media::{scan_folder_recursive, MediaItem, MediaKind};
+use media::{scan_browse, scan_folder_recursive, Entry, MediaKind};
+use prefs::Prefs;
 use thumbs::load_or_make_thumb;
 
 actions!(
@@ -25,13 +27,20 @@ actions!(
         MoveUp,
         MoveDown,
         OpenFolder,
+        GoUp,
         DensitySmall,
         DensityMedium,
         DensityLarge,
         ToggleSlideshow,
+        ToggleFlat,
+        ToggleSaved,
         ResetZoom,
     ]
 );
+
+const SIDEBAR_W: f32 = 208.0;
+const PAD: f32 = 20.0;
+const GAP: f32 = 12.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Density {
@@ -41,11 +50,11 @@ enum Density {
 }
 
 impl Density {
-    fn tile(self) -> f32 {
+    fn target(self) -> f32 {
         match self {
-            Self::Small => 112.0,
-            Self::Medium => 168.0,
-            Self::Large => 240.0,
+            Self::Small => 120.0,
+            Self::Medium => 176.0,
+            Self::Large => 248.0,
         }
     }
 
@@ -77,9 +86,11 @@ impl Default for ViewerState {
 }
 
 struct Gallery {
+    root: PathBuf,
     folder: PathBuf,
-    items: Vec<MediaItem>,
+    entries: Vec<Entry>,
     thumbs: HashMap<PathBuf, Arc<Image>>,
+    prefs: Prefs,
     loading: bool,
     load_gen: u64,
     thumb_gen: u64,
@@ -96,10 +107,13 @@ impl Gallery {
     fn new(folder: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window);
+        let prefs = Prefs::load();
         let mut gallery = Self {
+            root: folder.clone(),
             folder: folder.clone(),
-            items: Vec::new(),
+            entries: Vec::new(),
             thumbs: HashMap::new(),
+            prefs,
             loading: false,
             load_gen: 0,
             thumb_gen: 0,
@@ -111,13 +125,21 @@ impl Gallery {
             slideshow_gen: 0,
             focus_handle,
         };
-        gallery.begin_load(folder, cx);
+        gallery.open_library(folder, true, cx);
         gallery
+    }
+
+    fn open_library(&mut self, folder: PathBuf, set_root: bool, cx: &mut Context<Self>) {
+        if set_root {
+            self.root = folder.clone();
+        }
+        self.prefs.touch_recent(&folder);
+        self.begin_load(folder, cx);
     }
 
     fn begin_load(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
         self.folder = folder.clone();
-        self.items.clear();
+        self.entries.clear();
         self.thumbs.clear();
         self.focused = None;
         self.selected = None;
@@ -127,20 +149,31 @@ impl Gallery {
         self.load_gen += 1;
         self.thumb_gen += 1;
         let gen = self.load_gen;
+        let flat = self.prefs.flat_mode;
         cx.notify();
 
         cx.spawn(async move |this, cx| {
-            let items = cx
-                .background_spawn(async move { scan_folder_recursive(&folder) })
+            let entries = cx
+                .background_spawn(async move {
+                    if flat {
+                        scan_folder_recursive(&folder)
+                    } else {
+                        scan_browse(&folder)
+                    }
+                })
                 .await;
 
             this.update(cx, |this, cx| {
                 if this.load_gen != gen {
                     return;
                 }
-                this.items = items;
+                this.entries = entries;
                 this.loading = false;
-                this.focused = if this.items.is_empty() { None } else { Some(0) };
+                this.focused = if this.entries.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                };
                 this.queue_thumbs(cx);
                 cx.notify();
             })
@@ -153,10 +186,12 @@ impl Gallery {
         self.thumb_gen += 1;
         let gen = self.thumb_gen;
         let paths: Vec<PathBuf> = self
-            .items
+            .entries
             .iter()
-            .filter(|i| i.kind == MediaKind::Image)
-            .map(|i| i.path.clone())
+            .filter_map(|e| match e {
+                Entry::Media(m) if m.kind == MediaKind::Image => Some(m.path.clone()),
+                _ => None,
+            })
             .collect();
 
         cx.spawn(async move |this, cx| {
@@ -195,30 +230,62 @@ impl Gallery {
         .detach();
     }
 
-    fn columns(&self, window: &Window) -> usize {
+    fn content_width(&self, window: &Window) -> f32 {
         let width: f32 = window.viewport_size().width.into();
-        let tile = self.density.tile() + 16.0;
-        let usable = (width.max(1.0) - 32.0).max(tile);
-        (usable / tile).floor().max(1.0) as usize
+        (width - SIDEBAR_W).max(200.0)
     }
 
-    fn open_item(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(item) = self.items.get(index).cloned() else {
+    fn layout(&self, window: &Window) -> (usize, f32) {
+        let usable = (self.content_width(window) - PAD * 2.0).max(self.density.target());
+        let target = self.density.target();
+        let cols = ((usable + GAP) / (target + GAP)).floor().max(1.0) as usize;
+        let tile = (usable - GAP * (cols.saturating_sub(1) as f32)) / cols as f32;
+        (cols, tile.max(72.0))
+    }
+
+    fn columns(&self, window: &Window) -> usize {
+        self.layout(window).0
+    }
+
+    fn can_go_up(&self) -> bool {
+        !self.prefs.flat_mode && self.folder != self.root
+    }
+
+    fn go_up(&mut self, _: &GoUp, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_go_up() {
+            return;
+        }
+        if let Some(parent) = self.folder.parent() {
+            if parent.starts_with(&self.root) || parent == self.root {
+                self.begin_load(parent.to_path_buf(), cx);
+            }
+        }
+    }
+
+    fn open_entry(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(entry) = self.entries.get(index).cloned() else {
             return;
         };
         self.focused = Some(index);
-        match item.kind {
-            MediaKind::Image => {
-                self.selected = Some(index);
-                self.viewer = ViewerState::default();
-                cx.notify();
-            }
-            MediaKind::Video => {
+        match entry {
+            Entry::Folder(folder) => {
                 self.selected = None;
                 self.stop_slideshow();
-                cx.open_with_system(&item.path);
-                cx.notify();
+                self.begin_load(folder.path, cx);
             }
+            Entry::Media(item) => match item.kind {
+                MediaKind::Image => {
+                    self.selected = Some(index);
+                    self.viewer = ViewerState::default();
+                    cx.notify();
+                }
+                MediaKind::Video => {
+                    self.selected = None;
+                    self.stop_slideshow();
+                    cx.open_with_system(&item.path);
+                    cx.notify();
+                }
+            },
         }
     }
 
@@ -235,15 +302,15 @@ impl Gallery {
             return;
         }
         if let Some(i) = self.focused {
-            self.open_item(i, cx);
+            self.open_entry(i, cx);
         }
     }
 
     fn move_focus(&mut self, delta: isize, wrap: bool, cx: &mut Context<Self>) {
-        if self.selected.is_some() || self.items.is_empty() {
+        if self.selected.is_some() || self.entries.is_empty() {
             return;
         }
-        let len = self.items.len() as isize;
+        let len = self.entries.len() as isize;
         let cur = self.focused.unwrap_or(0) as isize;
         let next = if wrap {
             (cur + delta).rem_euclid(len)
@@ -290,7 +357,7 @@ impl Gallery {
         if self.selected.is_some() {
             self.step_image(1, cx);
         } else if let Some(i) = self.focused {
-            self.open_item(i, cx);
+            self.open_entry(i, cx);
         }
     }
 
@@ -301,18 +368,18 @@ impl Gallery {
     }
 
     fn step_image(&mut self, step: isize, cx: &mut Context<Self>) {
-        if self.items.is_empty() {
+        if self.entries.is_empty() {
             return;
         }
         let start = match self.selected {
             Some(i) => i as isize + step,
             None => self.focused.unwrap_or(0) as isize,
         };
-        let len = self.items.len() as isize;
+        let len = self.entries.len() as isize;
         let mut i = start.rem_euclid(len);
-        for _ in 0..self.items.len() {
+        for _ in 0..self.entries.len() {
             let idx = i as usize;
-            if self.items[idx].kind == MediaKind::Image {
+            if matches!(&self.entries[idx], Entry::Media(m) if m.kind == MediaKind::Image) {
                 self.selected = Some(idx);
                 self.focused = Some(idx);
                 self.viewer = ViewerState::default();
@@ -323,7 +390,7 @@ impl Gallery {
         }
     }
 
-    fn open_folder_action(&mut self, _: &OpenFolder, _window: &mut Window, cx: &mut Context<Self>) {
+    fn open_folder_action(&mut self, _: &OpenFolder, _: &mut Window, cx: &mut Context<Self>) {
         self.pick_folder(cx);
     }
 
@@ -343,7 +410,7 @@ impl Gallery {
                 return;
             };
             this.update(cx, |this, cx| {
-                this.begin_load(folder, cx);
+                this.open_library(folder, true, cx);
             })
             .ok();
         })
@@ -367,6 +434,18 @@ impl Gallery {
         self.set_density(Density::Large, cx);
     }
 
+    fn toggle_flat(&mut self, _: &ToggleFlat, _: &mut Window, cx: &mut Context<Self>) {
+        self.prefs.flat_mode = !self.prefs.flat_mode;
+        self.prefs.save();
+        let folder = self.folder.clone();
+        self.begin_load(folder, cx);
+    }
+
+    fn toggle_saved(&mut self, _: &ToggleSaved, _: &mut Window, cx: &mut Context<Self>) {
+        self.prefs.toggle_saved(&self.root);
+        cx.notify();
+    }
+
     fn stop_slideshow(&mut self) {
         self.slideshow = false;
         self.slideshow_gen += 1;
@@ -378,23 +457,12 @@ impl Gallery {
             cx.notify();
             return;
         }
-
         if self.selected.is_none() {
-            if let Some(i) = self.focused {
-                if self.items.get(i).map(|it| it.kind) == Some(MediaKind::Image) {
-                    self.open_item(i, cx);
-                } else {
-                    self.step_image(1, cx);
-                }
-            } else {
-                self.step_image(1, cx);
-            }
+            self.step_image(1, cx);
         }
-
         if self.selected.is_none() {
             return;
         }
-
         self.slideshow = true;
         self.slideshow_gen += 1;
         let gen = self.slideshow_gen;
@@ -497,47 +565,105 @@ impl Gallery {
         }
     }
 
-    fn toolbar_btn(
-        id: &'static str,
+    fn btn(
+        id: impl Into<SharedString>,
         label: impl Into<SharedString>,
+        active: bool,
+        prominent: bool,
+        cx: &Context<Self>,
+        on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>) + 'static,
+    ) -> impl IntoElement {
+        let id = id.into();
+        div()
+            .id(id)
+            .px_3()
+            .py_1p5()
+            .rounded_md()
+            .text_sm()
+            .cursor_pointer()
+            .when(prominent, |s| {
+                s.bg(rgb(0xe8e8e8))
+                    .text_color(rgb(0x111111))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .hover(|s| s.bg(rgb(0xffffff)))
+            })
+            .when(!prominent && active, |s| {
+                s.bg(rgb(0x3a3a3a)).text_color(rgb(0xffffff))
+            })
+            .when(!prominent && !active, |s| {
+                s.bg(rgb(0x242424))
+                    .text_color(rgb(0xc8c8c8))
+                    .hover(|s| s.bg(rgb(0x303030)).text_color(rgb(0xffffff)))
+            })
+            .child(label.into())
+            .on_click(cx.listener(on_click))
+    }
+
+    fn sidebar_row(
+        id: impl Into<ElementId>,
+        label: SharedString,
         active: bool,
         cx: &Context<Self>,
         on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>) + 'static,
     ) -> impl IntoElement {
         div()
             .id(id)
+            .w_full()
             .px_2()
-            .py_1()
+            .py_1p5()
             .rounded_md()
-            .text_xs()
+            .text_sm()
             .cursor_pointer()
-            .when(active, |s| {
-                s.bg(rgb(0x3a3a3a)).text_color(rgb(0xffffff))
-            })
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .when(active, |s| s.bg(rgb(0x2e2e2e)).text_color(rgb(0xffffff)))
             .when(!active, |s| {
-                s.bg(rgb(0x1e1e1e))
-                    .text_color(rgb(0xb0b0b0))
-                    .hover(|s| s.bg(rgb(0x2a2a2a)).text_color(rgb(0xe8e8e8)))
+                s.text_color(rgb(0xa8a8a8))
+                    .hover(|s| s.bg(rgb(0x222222)).text_color(rgb(0xe8e8e8)))
             })
-            .child(label.into())
+            .child(label)
             .on_click(cx.listener(on_click))
     }
 
     fn render_tile(
         &self,
         index: usize,
-        item: &MediaItem,
+        entry: &Entry,
         tile: f32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focused = self.focused == Some(index);
-        let kind = item.kind;
-        let name = item.name.clone();
-        let thumb = self.thumbs.get(&item.path).cloned();
+        let name = entry.name().clone();
 
-        let media = match kind {
-            MediaKind::Image => {
-                if let Some(thumb) = thumb {
+        let media = match entry {
+            Entry::Folder(_) => div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .bg(rgb(0x1c1c1c))
+                .text_color(rgb(0xd0d0d0))
+                .child(
+                    div()
+                        .text_xl()
+                        .child("📁"),
+                )
+                .child(div().text_xs().text_color(rgb(0x888888)).child("folder"))
+                .into_any_element(),
+            Entry::Media(item) if item.kind == MediaKind::Video => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(rgb(0x1a1a1a))
+                .text_color(rgb(0xc8c8c8))
+                .text_lg()
+                .child("▶")
+                .into_any_element(),
+            Entry::Media(item) => {
+                if let Some(thumb) = self.thumbs.get(&item.path).cloned() {
                     img(thumb)
                         .id(("thumb", index))
                         .size_full()
@@ -550,22 +676,12 @@ impl Gallery {
                         .items_center()
                         .justify_center()
                         .bg(rgb(0x1a1a1a))
-                        .text_color(rgb(0x666666))
+                        .text_color(rgb(0x555555))
                         .text_xs()
                         .child("…")
                         .into_any_element()
                 }
             }
-            MediaKind::Video => div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(rgb(0x1a1a1a))
-                .text_color(rgb(0xc8c8c8))
-                .text_sm()
-                .child("▶")
-                .into_any_element(),
         };
 
         div()
@@ -576,7 +692,7 @@ impl Gallery {
             .gap_1()
             .cursor_pointer()
             .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                this.open_item(index, cx);
+                this.open_entry(index, cx);
             }))
             .child(
                 div()
@@ -586,7 +702,7 @@ impl Gallery {
                     .rounded_md()
                     .bg(rgb(0x222222))
                     .border_2()
-                    .when(focused, |s| s.border_color(rgb(0xe8e8e8)))
+                    .when(focused, |s| s.border_color(rgb(0xf0f0f0)))
                     .when(!focused, |s| s.border_color(rgb(0x222222)))
                     .child(media),
             )
@@ -595,7 +711,7 @@ impl Gallery {
                     .w(px(tile))
                     .px_1()
                     .text_xs()
-                    .text_color(if focused { rgb(0xe8e8e8) } else { rgb(0x8a8a8a) })
+                    .text_color(if focused { rgb(0xf0f0f0) } else { rgb(0x8a8a8a) })
                     .whitespace_nowrap()
                     .overflow_hidden()
                     .child(name),
@@ -603,7 +719,9 @@ impl Gallery {
     }
 
     fn render_lightbox(&self, index: usize, cx: &Context<Self>) -> impl IntoElement {
-        let item = &self.items[index];
+        let Entry::Media(item) = &self.entries[index] else {
+            return div().into_any_element();
+        };
         let zoom = self.viewer.zoom;
         let pan = self.viewer.pan;
         let slideshow = self.slideshow;
@@ -611,7 +729,7 @@ impl Gallery {
             "{}  ·  {} / {}  ·  {:.0}%{}",
             item.name,
             index + 1,
-            self.items.len(),
+            self.entries.len(),
             zoom * 100.0,
             if slideshow { "  ·  slideshow" } else { "" }
         );
@@ -625,7 +743,6 @@ impl Gallery {
             .bg(rgb(0x0a0a0a))
             .child(
                 div()
-                    .id("lightbox-chrome")
                     .flex()
                     .items_center()
                     .justify_between()
@@ -644,16 +761,17 @@ impl Gallery {
                         div()
                             .flex()
                             .gap_2()
-                            .child(Self::toolbar_btn(
+                            .child(Self::btn(
                                 "slide-btn",
                                 if slideshow { "Stop" } else { "Slideshow" },
                                 slideshow,
+                                false,
                                 cx,
                                 |this, _, window, cx| {
                                     this.toggle_slideshow(&ToggleSlideshow, window, cx);
                                 },
                             ))
-                            .child(Self::toolbar_btn("close-btn", "Esc", false, cx, |this, _, _, cx| {
+                            .child(Self::btn("close-btn", "Close", false, false, cx, |this, _, _, cx| {
                                 this.selected = None;
                                 this.viewer = ViewerState::default();
                                 this.stop_slideshow();
@@ -668,11 +786,6 @@ impl Gallery {
                     .w_full()
                     .relative()
                     .overflow_hidden()
-                    .cursor(if zoom > 1.0 {
-                        gpui::CursorStyle::PointingHand
-                    } else {
-                        gpui::CursorStyle::Arrow
-                    })
                     .on_scroll_wheel(cx.listener(Self::on_viewer_scroll))
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::on_viewer_down))
                     .on_mouse_move(cx.listener(Self::on_viewer_move))
@@ -698,30 +811,57 @@ impl Gallery {
                     .py_2()
                     .text_xs()
                     .text_color(rgb(0x777777))
-                    .child("Scroll zoom · drag pan · double-click reset · ← → navigate · S slideshow"),
+                    .child("Scroll zoom · drag pan · double-click reset · ← → · S slideshow"),
             )
+            .into_any_element()
+    }
+
+    fn breadcrumb(&self) -> SharedString {
+        let rel = self
+            .folder
+            .strip_prefix(&self.root)
+            .ok()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .filter(|s| !s.is_empty());
+        match rel {
+            Some(rel) => format!("{} / {}", self.root.file_name().and_then(|n| n.to_str()).unwrap_or("library"), rel).into(),
+            None => self
+                .root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("library")
+                .to_string()
+                .into(),
+        }
     }
 }
 
 impl Render for Gallery {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let folder_label: SharedString = self.folder.display().to_string().into();
-        let count = self.items.len();
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (_, tile) = self.layout(window);
+        let count = self.entries.len();
         let selected = self.selected;
         let density = self.density;
-        let tile = density.tile();
         let loading = self.loading;
         let slideshow = self.slideshow;
+        let flat = self.prefs.flat_mode;
+        let saved = self.prefs.is_saved(&self.root);
+        let crumb = self.breadcrumb();
+        let folder_full: SharedString = self.folder.display().to_string().into();
 
+        let folders = self.entries.iter().filter(|e| matches!(e, Entry::Folder(_))).count();
+        let media = count.saturating_sub(folders);
         let status: SharedString = if loading {
-            "Scanning…".into()
+            "Loading…".into()
+        } else if flat {
+            format!("{media} media").into()
         } else {
-            format!(
-                "{count} item{}",
-                if count == 1 { "" } else { "s" }
-            )
-            .into()
+            format!("{folders} folders · {media} media").into()
         };
+
+        let recents = self.prefs.recents.clone();
+        let saved_list = self.prefs.saved.clone();
+        let current_root = self.root.clone();
 
         let root = div()
             .id("gallery")
@@ -736,149 +876,306 @@ impl Render for Gallery {
             .on_action(cx.listener(Self::on_move_up))
             .on_action(cx.listener(Self::on_move_down))
             .on_action(cx.listener(Self::open_folder_action))
+            .on_action(cx.listener(Self::go_up))
             .on_action(cx.listener(Self::density_small))
             .on_action(cx.listener(Self::density_medium))
             .on_action(cx.listener(Self::density_large))
             .on_action(cx.listener(Self::toggle_slideshow))
+            .on_action(cx.listener(Self::toggle_flat))
+            .on_action(cx.listener(Self::toggle_saved))
             .on_action(cx.listener(Self::reset_zoom))
             .size_full()
             .flex()
-            .flex_col()
-            .bg(rgb(0x121212))
+            .flex_row()
+            .bg(rgb(0x101010))
             .text_color(rgb(0xe8e8e8))
+            // Sidebar
             .child(
                 div()
+                    .id("sidebar")
+                    .w(px(SIDEBAR_W))
+                    .h_full()
                     .flex()
-                    .items_center()
-                    .justify_between()
+                    .flex_col()
                     .gap_3()
-                    .px_4()
+                    .px_3()
                     .py_3()
-                    .border_b_1()
-                    .border_color(rgb(0x2a2a2a))
+                    .border_r_1()
+                    .border_color(rgb(0x242424))
+                    .bg(rgb(0x141414))
                     .child(
                         div()
                             .flex()
                             .flex_col()
-                            .gap_0p5()
-                            .min_w_0()
-                            .flex_1()
+                            .gap_2()
                             .child(
                                 div()
                                     .text_lg()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .child("gallery"),
                             )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(0x888888))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .child(folder_label),
-                            ),
+                            .child(Self::btn(
+                                "open-sidebar",
+                                "Open Folder",
+                                false,
+                                true,
+                                cx,
+                                |this, _, _, cx| this.pick_folder(cx),
+                            )),
                     )
                     .child(
                         div()
                             .flex()
-                            .items_center()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .px_2()
+                                    .text_xs()
+                                    .text_color(rgb(0x666666))
+                                    .child("SAVED"),
+                            )
+                            .when(saved_list.is_empty(), |s| {
+                                s.child(
+                                    div()
+                                        .px_2()
+                                        .text_xs()
+                                        .text_color(rgb(0x555555))
+                                        .child("Pin a library with Save"),
+                                )
+                            })
+                            .children(saved_list.into_iter().enumerate().map(|(i, path)| {
+                                let label: SharedString = path
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("folder")
+                                    .to_string()
+                                    .into();
+                                let active = path == current_root;
+                                Self::sidebar_row(("saved", i), label, active, cx, move |this, _, _, cx| {
+                                    this.open_library(path.clone(), true, cx);
+                                })
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .flex_1()
+                            .child(
+                                div()
+                                    .px_2()
+                                    .text_xs()
+                                    .text_color(rgb(0x666666))
+                                    .child("RECENT"),
+                            )
+                            .children(recents.into_iter().enumerate().map(|(i, path)| {
+                                let label: SharedString = path
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("folder")
+                                    .to_string()
+                                    .into();
+                                let active = path == current_root;
+                                Self::sidebar_row(("recent", i), label, active, cx, move |this, _, _, cx| {
+                                    this.open_library(path.clone(), true, cx);
+                                })
+                            })),
+                    ),
+            )
+            // Main
+            .child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
                             .gap_2()
-                            .child(Self::toolbar_btn("open", "Open", false, cx, |this, _, _, cx| {
-                                this.pick_folder(cx);
-                            }))
+                            .px_4()
+                            .py_3()
+                            .border_b_1()
+                            .border_color(rgb(0x242424))
                             .child(
                                 div()
                                     .flex()
-                                    .gap_1()
-                                    .child(Self::toolbar_btn(
-                                        "d-s",
-                                        Density::Small.label(),
-                                        density == Density::Small,
-                                        cx,
-                                        |this, _, _, cx| this.set_density(Density::Small, cx),
-                                    ))
-                                    .child(Self::toolbar_btn(
-                                        "d-m",
-                                        Density::Medium.label(),
-                                        density == Density::Medium,
-                                        cx,
-                                        |this, _, _, cx| this.set_density(Density::Medium, cx),
-                                    ))
-                                    .child(Self::toolbar_btn(
-                                        "d-l",
-                                        Density::Large.label(),
-                                        density == Density::Large,
-                                        cx,
-                                        |this, _, _, cx| this.set_density(Density::Large, cx),
-                                    )),
-                            )
-                            .child(Self::toolbar_btn(
-                                "slideshow",
-                                if slideshow { "Stop" } else { "Slideshow" },
-                                slideshow,
-                                cx,
-                                |this, _, window, cx| {
-                                    this.toggle_slideshow(&ToggleSlideshow, window, cx);
-                                },
-                            ))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(rgb(0x888888))
-                                    .child(status),
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .min_w_0()
+                                            .flex_1()
+                                            .child(Self::btn(
+                                                "back",
+                                                "← Back",
+                                                false,
+                                                false,
+                                                cx,
+                                                |this, _, window, cx| {
+                                                    this.go_up(&GoUp, window, cx);
+                                                },
+                                            ))
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .min_w_0()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                                            .overflow_hidden()
+                                                            .whitespace_nowrap()
+                                                            .child(crumb),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(rgb(0x777777))
+                                                            .overflow_hidden()
+                                                            .whitespace_nowrap()
+                                                            .child(folder_full),
+                                                    ),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(Self::btn(
+                                                "save",
+                                                if saved { "Saved ★" } else { "Save" },
+                                                saved,
+                                                false,
+                                                cx,
+                                                |this, _, window, cx| {
+                                                    this.toggle_saved(&ToggleSaved, window, cx);
+                                                },
+                                            ))
+                                            .child(Self::btn(
+                                                "flat",
+                                                if flat { "Flat" } else { "Folders" },
+                                                flat,
+                                                false,
+                                                cx,
+                                                |this, _, window, cx| {
+                                                    this.toggle_flat(&ToggleFlat, window, cx);
+                                                },
+                                            ))
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .gap_1()
+                                                    .child(Self::btn(
+                                                        "d-s",
+                                                        Density::Small.label(),
+                                                        density == Density::Small,
+                                                        false,
+                                                        cx,
+                                                        |this, _, _, cx| {
+                                                            this.set_density(Density::Small, cx)
+                                                        },
+                                                    ))
+                                                    .child(Self::btn(
+                                                        "d-m",
+                                                        Density::Medium.label(),
+                                                        density == Density::Medium,
+                                                        false,
+                                                        cx,
+                                                        |this, _, _, cx| {
+                                                            this.set_density(Density::Medium, cx)
+                                                        },
+                                                    ))
+                                                    .child(Self::btn(
+                                                        "d-l",
+                                                        Density::Large.label(),
+                                                        density == Density::Large,
+                                                        false,
+                                                        cx,
+                                                        |this, _, _, cx| {
+                                                            this.set_density(Density::Large, cx)
+                                                        },
+                                                    )),
+                                            )
+                                            .child(Self::btn(
+                                                "slideshow",
+                                                if slideshow { "Stop" } else { "Slideshow" },
+                                                slideshow,
+                                                false,
+                                                cx,
+                                                |this, _, window, cx| {
+                                                    this.toggle_slideshow(&ToggleSlideshow, window, cx);
+                                                },
+                                            ))
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(rgb(0x888888))
+                                                    .child(status),
+                                            ),
+                                    ),
                             ),
-                    ),
-            )
-            .child(
-                div()
-                    .id("grid")
-                    .flex_1()
-                    .w_full()
-                    .overflow_y_scroll()
-                    .p_4()
-                    .when(loading, |s| {
-                        s.flex().items_center().justify_center().child(
-                            div()
-                                .text_color(rgb(0x777777))
-                                .child("Scanning folder…"),
-                        )
-                    })
-                    .when(!loading && count == 0, |s| {
-                        s.flex().items_center().justify_center().child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .gap_3()
-                                .child(
-                                    div()
-                                        .text_color(rgb(0x777777))
-                                        .child("No images or videos found."),
+                    )
+                    .child(
+                        div()
+                            .id("grid")
+                            .flex_1()
+                            .w_full()
+                            .overflow_y_scroll()
+                            .p(px(PAD))
+                            .when(loading, |s| {
+                                s.flex().items_center().justify_center().child(
+                                    div().text_color(rgb(0x777777)).child("Loading folder…"),
                                 )
-                                .child(Self::toolbar_btn(
-                                    "open-empty",
-                                    "Open Folder",
-                                    false,
-                                    cx,
-                                    |this, _, _, cx| this.pick_folder(cx),
-                                )),
-                        )
-                    })
-                    .when(!loading && count > 0, |s| {
-                        s.child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .flex_wrap()
-                                .gap_4()
-                                .children(
-                                    self.items
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(i, item)| self.render_tile(i, item, tile, cx)),
-                                ),
-                        )
-                    }),
+                            })
+                            .when(!loading && count == 0, |s| {
+                                s.flex().items_center().justify_center().child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .gap_3()
+                                        .child(
+                                            div()
+                                                .text_color(rgb(0x777777))
+                                                .child("Nothing here yet."),
+                                        )
+                                        .child(Self::btn(
+                                            "open-empty",
+                                            "Open Folder",
+                                            false,
+                                            true,
+                                            cx,
+                                            |this, _, _, cx| this.pick_folder(cx),
+                                        )),
+                                )
+                            })
+                            .when(!loading && count > 0, |s| {
+                                s.child(
+                                    div()
+                                        .w_full()
+                                        .flex()
+                                        .flex_row()
+                                        .flex_wrap()
+                                        .gap(px(GAP))
+                                        .children(
+                                            self.entries.iter().enumerate().map(|(i, entry)| {
+                                                self.render_tile(i, entry, tile, cx)
+                                            }),
+                                        ),
+                                )
+                            }),
+                    ),
             );
 
         root.when_some(selected, |s, index| s.child(self.render_lightbox(index, cx)))
@@ -886,10 +1183,15 @@ impl Render for Gallery {
 }
 
 fn resolve_folder() -> PathBuf {
-    let arg = std::env::args().nth(1);
-    let path = arg
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("media"));
+    if let Some(arg) = std::env::args().nth(1) {
+        let path = PathBuf::from(arg);
+        return path.canonicalize().unwrap_or(path);
+    }
+    let prefs = Prefs::load();
+    if let Some(recent) = prefs.recents.first() {
+        return recent.clone();
+    }
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("media");
     path.canonicalize().unwrap_or(path)
 }
 
@@ -902,6 +1204,8 @@ fn main() {
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, None),
             KeyBinding::new("cmd-o", OpenFolder, Some("Gallery")),
+            KeyBinding::new("cmd-up", GoUp, Some("Gallery")),
+            KeyBinding::new("backspace", GoUp, Some("Gallery")),
             KeyBinding::new("escape", CloseViewer, Some("Gallery")),
             KeyBinding::new("right", MoveRight, Some("Gallery")),
             KeyBinding::new("left", MoveLeft, Some("Gallery")),
@@ -913,19 +1217,22 @@ fn main() {
             KeyBinding::new("2", DensityMedium, Some("Gallery")),
             KeyBinding::new("3", DensityLarge, Some("Gallery")),
             KeyBinding::new("s", ToggleSlideshow, Some("Gallery")),
+            KeyBinding::new("f", ToggleFlat, Some("Gallery")),
+            KeyBinding::new("cmd-d", ToggleSaved, Some("Gallery")),
             KeyBinding::new("0", ResetZoom, Some("Gallery")),
         ]);
         cx.set_menus(vec![Menu {
             name: "gallery".into(),
             items: vec![
                 MenuItem::action("Open Folder…", OpenFolder),
+                MenuItem::action("Go Up", GoUp),
                 MenuItem::separator(),
                 MenuItem::action("Quit", Quit),
             ],
         }]);
 
         let title = format!("gallery — {}", folder.display());
-        let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
+        let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
 
         cx.open_window(
             WindowOptions {
