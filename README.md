@@ -1,22 +1,38 @@
 # gallery
 
-A minimal photo/video gallery built with [GPUI](https://www.gpui.rs) (Zed's UI framework).
+A fast, minimal photo/video gallery built with [GPUI](https://www.gpui.rs).
 
 ## Run
 
 ```bash
-cargo run --release -- ./media
+cargo run --release
+cargo run --release -- ~/Pictures
 ```
 
-Pass any folder of images/videos. Defaults to `./media` if omitted.
+Defaults to `./media` when no folder is passed.
+
+## Features
+
+- Recursive folder scan (async, non-blocking)
+- Downscaled thumbnail cache
+- Folder picker (`Open` or ⌘O)
+- Grid density S / M / L (`1` `2` `3`)
+- Keyboard grid focus (arrows) · Enter / Space to open
+- Lightbox zoom (scroll) · pan (drag) · double-click / `0` to reset
+- Slideshow (`S` or toolbar) — 3s interval
+- Videos open in the system player
 
 ## Controls
 
-| Key | Action |
+| Input | Action |
 | --- | --- |
-| Click | Open lightbox / play video |
-| ← → / Space | Prev / next |
+| Click / Enter / Space | Open |
+| ← → ↑ ↓ | Focus grid / navigate lightbox |
 | Esc | Close lightbox |
-| Cmd+Q | Quit |
-
-Videos open in the system player (GPUI has no built-in video decoder).
+| Scroll | Zoom |
+| Drag | Pan (when zoomed) |
+| Double-click / `0` | Reset zoom |
+| `S` | Toggle slideshow |
+| `1` `2` `3` | Density |
+| ⌘O | Open folder |
+| ⌘Q | Quit |
