@@ -2,6 +2,7 @@ mod media;
 mod prefs;
 #[cfg(target_os = "macos")]
 mod tray;
+mod ui;
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
@@ -14,6 +15,7 @@ use gpui::{
 };
 use media::{load_or_make_thumb, scan_browse, scan_folder_recursive, Entry, MediaKind};
 use prefs::Prefs;
+use ui::{Theme, SIDEBAR_W};
 
 actions!(
     gallery,
@@ -39,7 +41,6 @@ actions!(
     ]
 );
 
-const SIDEBAR_W: f32 = 208.0;
 const PAD: f32 = 20.0;
 const GAP: f32 = 12.0;
 
@@ -571,6 +572,7 @@ impl Gallery {
         on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>) + 'static,
     ) -> impl IntoElement {
         let id = id.into();
+        let t = Theme::DARK;
         div()
             .id(id)
             .px_3()
@@ -579,18 +581,18 @@ impl Gallery {
             .text_sm()
             .cursor_pointer()
             .when(prominent, |s| {
-                s.bg(rgb(0xe8e8e8))
-                    .text_color(rgb(0x111111))
+                s.bg(rgb(t.prominent))
+                    .text_color(rgb(t.prominent_text))
                     .font_weight(gpui::FontWeight::MEDIUM)
-                    .hover(|s| s.bg(rgb(0xffffff)))
+                    .hover(|s| s.bg(rgb(t.prominent_hover)))
             })
             .when(!prominent && active, |s| {
-                s.bg(rgb(0x3a3a3a)).text_color(rgb(0xffffff))
+                s.bg(rgb(t.btn_active)).text_color(rgb(t.on_accent))
             })
             .when(!prominent && !active, |s| {
-                s.bg(rgb(0x242424))
-                    .text_color(rgb(0xc8c8c8))
-                    .hover(|s| s.bg(rgb(0x303030)).text_color(rgb(0xffffff)))
+                s.bg(rgb(t.btn))
+                    .text_color(rgb(t.btn_text))
+                    .hover(|s| s.bg(rgb(t.btn_hover)).text_color(rgb(t.on_accent)))
             })
             .child(label.into())
             .on_click(cx.listener(on_click))
@@ -603,6 +605,7 @@ impl Gallery {
         cx: &Context<Self>,
         on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>) + 'static,
     ) -> impl IntoElement {
+        let t = Theme::DARK;
         div()
             .id(id)
             .w_full()
@@ -613,10 +616,12 @@ impl Gallery {
             .cursor_pointer()
             .overflow_hidden()
             .whitespace_nowrap()
-            .when(active, |s| s.bg(rgb(0x2e2e2e)).text_color(rgb(0xffffff)))
+            .when(active, |s| {
+                s.bg(rgb(t.row_active)).text_color(rgb(t.on_accent))
+            })
             .when(!active, |s| {
-                s.text_color(rgb(0xa8a8a8))
-                    .hover(|s| s.bg(rgb(0x222222)).text_color(rgb(0xe8e8e8)))
+                s.text_color(rgb(t.inactive))
+                    .hover(|s| s.bg(rgb(t.surface_hover)).text_color(rgb(t.text)))
             })
             .child(label)
             .on_click(cx.listener(on_click))
@@ -631,6 +636,7 @@ impl Gallery {
     ) -> impl IntoElement {
         let focused = self.focused == Some(index);
         let name = entry.name().clone();
+        let t = Theme::DARK;
 
         let media = match entry {
             Entry::Folder(_) => div()
@@ -640,18 +646,23 @@ impl Gallery {
                 .items_center()
                 .justify_center()
                 .gap_2()
-                .bg(rgb(0x1c1c1c))
-                .text_color(rgb(0xd0d0d0))
+                .bg(rgb(t.tile_folder))
+                .text_color(rgb(t.accent_soft))
                 .child(div().text_xl().child("📁"))
-                .child(div().text_xs().text_color(rgb(0x888888)).child("folder"))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(t.text_muted))
+                        .child("folder"),
+                )
                 .into_any_element(),
             Entry::Media(item) if item.kind == MediaKind::Video => div()
                 .size_full()
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(rgb(0x1a1a1a))
-                .text_color(rgb(0xc8c8c8))
+                .bg(rgb(t.tile_media))
+                .text_color(rgb(t.btn_text))
                 .text_lg()
                 .child("▶")
                 .into_any_element(),
@@ -668,8 +679,8 @@ impl Gallery {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .bg(rgb(0x1a1a1a))
-                        .text_color(rgb(0x555555))
+                        .bg(rgb(t.tile_media))
+                        .text_color(rgb(t.text_hint))
                         .text_xs()
                         .child("…")
                         .into_any_element()
@@ -693,10 +704,10 @@ impl Gallery {
                     .h(px(tile))
                     .overflow_hidden()
                     .rounded_md()
-                    .bg(rgb(0x222222))
+                    .bg(rgb(t.tile))
                     .border_2()
-                    .when(focused, |s| s.border_color(rgb(0xf0f0f0)))
-                    .when(!focused, |s| s.border_color(rgb(0x222222)))
+                    .when(focused, |s| s.border_color(rgb(t.accent)))
+                    .when(!focused, |s| s.border_color(rgb(t.tile)))
                     .child(media),
             )
             .child(
@@ -705,9 +716,9 @@ impl Gallery {
                     .px_1()
                     .text_xs()
                     .text_color(if focused {
-                        rgb(0xf0f0f0)
+                        rgb(t.accent)
                     } else {
-                        rgb(0x8a8a8a)
+                        rgb(t.name_idle)
                     })
                     .whitespace_nowrap()
                     .overflow_hidden()
@@ -722,6 +733,7 @@ impl Gallery {
         let zoom = self.viewer.zoom;
         let pan = self.viewer.pan;
         let slideshow = self.slideshow;
+        let t = Theme::DARK;
         let label = format!(
             "{}  ·  {} / {}  ·  {:.0}%{}",
             item.name,
@@ -737,7 +749,7 @@ impl Gallery {
             .inset_0()
             .flex()
             .flex_col()
-            .bg(rgb(0x0a0a0a))
+            .bg(rgb(t.lightbox))
             .child(
                 div()
                     .flex()
@@ -749,7 +761,7 @@ impl Gallery {
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(0xd0d0d0))
+                            .text_color(rgb(t.accent_soft))
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .child(label),
@@ -814,7 +826,7 @@ impl Gallery {
                     .px_4()
                     .py_2()
                     .text_xs()
-                    .text_color(rgb(0x777777))
+                    .text_color(rgb(t.text_dim))
                     .child("Scroll zoom · drag pan · double-click reset · ← → · S slideshow"),
             )
             .into_any_element()
@@ -878,6 +890,7 @@ impl Render for Gallery {
         let recents = self.prefs.recents.clone();
         let saved_list = self.prefs.saved.clone();
         let current_root = self.root.clone();
+        let t = Theme::DARK;
 
         let root = div()
             .id("gallery")
@@ -903,8 +916,8 @@ impl Render for Gallery {
             .size_full()
             .flex()
             .flex_row()
-            .bg(rgb(0x101010))
-            .text_color(rgb(0xe8e8e8))
+            .bg(rgb(t.bg))
+            .text_color(rgb(t.text))
             // Sidebar
             .child(
                 div()
@@ -917,8 +930,8 @@ impl Render for Gallery {
                     .px_3()
                     .py_3()
                     .border_r_1()
-                    .border_color(rgb(0x242424))
-                    .bg(rgb(0x141414))
+                    .border_color(rgb(t.border))
+                    .bg(rgb(t.surface))
                     .child(
                         div()
                             .flex()
@@ -948,7 +961,7 @@ impl Render for Gallery {
                                 div()
                                     .px_2()
                                     .text_xs()
-                                    .text_color(rgb(0x666666))
+                                    .text_color(rgb(t.text_faint))
                                     .child("SAVED"),
                             )
                             .when(saved_list.is_empty(), |s| {
@@ -956,7 +969,7 @@ impl Render for Gallery {
                                     div()
                                         .px_2()
                                         .text_xs()
-                                        .text_color(rgb(0x555555))
+                                        .text_color(rgb(t.text_hint))
                                         .child("Pin a library with Save"),
                                 )
                             })
@@ -989,7 +1002,7 @@ impl Render for Gallery {
                                 div()
                                     .px_2()
                                     .text_xs()
-                                    .text_color(rgb(0x666666))
+                                    .text_color(rgb(t.text_faint))
                                     .child("RECENT"),
                             )
                             .children(recents.into_iter().enumerate().map(|(i, path)| {
@@ -1028,7 +1041,7 @@ impl Render for Gallery {
                             .px_4()
                             .py_3()
                             .border_b_1()
-                            .border_color(rgb(0x242424))
+                            .border_color(rgb(t.border))
                             .child(
                                 div()
                                     .flex()
@@ -1068,7 +1081,7 @@ impl Render for Gallery {
                                                     .child(
                                                         div()
                                                             .text_xs()
-                                                            .text_color(rgb(0x777777))
+                                                            .text_color(rgb(t.text_dim))
                                                             .overflow_hidden()
                                                             .whitespace_nowrap()
                                                             .child(folder_full),
@@ -1152,7 +1165,7 @@ impl Render for Gallery {
                                             .child(
                                                 div()
                                                     .text_sm()
-                                                    .text_color(rgb(0x888888))
+                                                    .text_color(rgb(t.text_muted))
                                                     .child(status),
                                             ),
                                     ),
@@ -1166,10 +1179,9 @@ impl Render for Gallery {
                             .overflow_y_scroll()
                             .p(px(PAD))
                             .when(loading, |s| {
-                                s.flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(div().text_color(rgb(0x777777)).child("Loading folder…"))
+                                s.flex().items_center().justify_center().child(
+                                    div().text_color(rgb(t.text_dim)).child("Loading folder…"),
+                                )
                             })
                             .when(!loading && count == 0, |s| {
                                 s.flex().items_center().justify_center().child(
@@ -1180,7 +1192,7 @@ impl Render for Gallery {
                                         .gap_3()
                                         .child(
                                             div()
-                                                .text_color(rgb(0x777777))
+                                                .text_color(rgb(t.text_dim))
                                                 .child("Nothing here yet."),
                                         )
                                         .child(Self::btn(
