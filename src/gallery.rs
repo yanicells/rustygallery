@@ -1,7 +1,8 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use gpui::{
-    actions, prelude::*, Context, FocusHandle, Image, PathPromptOptions, SharedString, Window,
+    actions, prelude::*, Context, FocusHandle, Image, PathPromptOptions, SharedString,
+    Subscription, Window,
 };
 
 use crate::media::{load_or_make_thumb, scan_browse, scan_folder_recursive, Entry, MediaKind};
@@ -60,6 +61,7 @@ pub struct Gallery {
     slideshow: bool,
     slideshow_gen: u64,
     focus_handle: FocusHandle,
+    _bounds: Option<Subscription>,
 }
 
 impl Gallery {
@@ -67,6 +69,7 @@ impl Gallery {
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window);
         let prefs = Prefs::load();
+        let density = Density::from_pref(&prefs.density);
         let mut gallery = Self {
             root: folder.clone(),
             folder: folder.clone(),
@@ -76,19 +79,34 @@ impl Gallery {
             loading: false,
             load_gen: 0,
             thumb_gen: 0,
-            density: Density::Medium,
+            density,
             focused: None,
             selected: None,
             viewer: ViewerState::default(),
             slideshow: false,
             slideshow_gen: 0,
             focus_handle,
+            _bounds: None,
         };
+        gallery._bounds = Some(cx.observe_window_bounds(window, |this, window, _cx| {
+            this.persist_window(window);
+        }));
         if std::env::args().nth(1).is_some() {
             gallery.prefs.mark_opened();
         }
         gallery.open_library(folder, true, cx);
         gallery
+    }
+
+    fn persist_window(&mut self, window: &Window) {
+        let bounds = window.window_bounds().get_bounds();
+        let x: f32 = bounds.origin.x.into();
+        let y: f32 = bounds.origin.y.into();
+        let w: f32 = bounds.size.width.into();
+        let h: f32 = bounds.size.height.into();
+        if self.prefs.set_window(x, y, w, h) {
+            self.prefs.save();
+        }
     }
 
     fn open_library(&mut self, folder: PathBuf, set_root: bool, cx: &mut Context<Self>) {
@@ -383,6 +401,8 @@ impl Gallery {
     fn set_density(&mut self, density: Density, cx: &mut Context<Self>) {
         if self.density != density {
             self.density = density;
+            self.prefs.density = density.as_pref().to_string();
+            self.prefs.save();
             cx.notify();
         }
     }

@@ -3,12 +3,27 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Prefs {
     pub recents: Vec<PathBuf>,
     pub saved: Vec<PathBuf>,
     pub flat_mode: bool,
     pub seen_open: bool,
+    pub density: String,
+    pub window: Option<(f32, f32, f32, f32)>,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Self {
+            recents: Vec::new(),
+            saved: Vec::new(),
+            flat_mode: false,
+            seen_open: false,
+            density: "medium".into(),
+            window: None,
+        }
+    }
 }
 
 impl Prefs {
@@ -23,6 +38,10 @@ impl Prefs {
         };
         let mut prefs = Self::default();
         let mut section = "";
+        let mut win_x = None;
+        let mut win_y = None;
+        let mut win_w = None;
+        let mut win_h = None;
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() {
@@ -35,9 +54,27 @@ impl Prefs {
             match section {
                 "[recents]" => prefs.recents.push(PathBuf::from(line)),
                 "[saved]" => prefs.saved.push(PathBuf::from(line)),
-                "[flags]" if line == "flat=1" => prefs.flat_mode = true,
-                "[flags]" if line == "flat=0" => prefs.flat_mode = false,
-                "[flags]" if line == "seen_open=1" => prefs.seen_open = true,
+                "[flags]" => match line {
+                    "flat=1" => prefs.flat_mode = true,
+                    "flat=0" => prefs.flat_mode = false,
+                    "seen_open=1" => prefs.seen_open = true,
+                    _ => {
+                        if let Some(value) = line.strip_prefix("density=") {
+                            prefs.density = value.to_string();
+                        }
+                    }
+                },
+                "[window]" => {
+                    if let Some(value) = line.strip_prefix("x=") {
+                        win_x = value.parse().ok();
+                    } else if let Some(value) = line.strip_prefix("y=") {
+                        win_y = value.parse().ok();
+                    } else if let Some(value) = line.strip_prefix("w=") {
+                        win_w = value.parse().ok();
+                    } else if let Some(value) = line.strip_prefix("h=") {
+                        win_h = value.parse().ok();
+                    }
+                }
                 _ => {}
             }
         }
@@ -45,6 +82,9 @@ impl Prefs {
         prefs.saved.retain(|p| p.is_dir());
         if !prefs.recents.is_empty() {
             prefs.seen_open = true;
+        }
+        if let (Some(x), Some(y), Some(w), Some(h)) = (win_x, win_y, win_w, win_h) {
+            prefs.window = Self::valid_window(x, y, w, h);
         }
         prefs
     }
@@ -63,6 +103,13 @@ impl Prefs {
         });
         if self.seen_open {
             out.push_str("seen_open=1\n");
+        }
+        out.push_str("density=");
+        out.push_str(&self.density);
+        out.push('\n');
+        if let Some((x, y, w, h)) = self.window {
+            out.push_str("\n[window]\n");
+            out.push_str(&format!("x={x}\ny={y}\nw={w}\nh={h}\n"));
         }
         out.push_str("\n[recents]\n");
         for p in self.recents.iter().take(12) {
@@ -97,6 +144,27 @@ impl Prefs {
         self.save();
     }
 
+    pub fn valid_window(x: f32, y: f32, w: f32, h: f32) -> Option<(f32, f32, f32, f32)> {
+        if !x.is_finite() || !y.is_finite() || !w.is_finite() || !h.is_finite() {
+            return None;
+        }
+        if w < 400.0 || h < 300.0 {
+            return None;
+        }
+        Some((x, y, w, h))
+    }
+
+    pub fn set_window(&mut self, x: f32, y: f32, w: f32, h: f32) -> bool {
+        let Some(next) = Self::valid_window(x.round(), y.round(), w.round(), h.round()) else {
+            return false;
+        };
+        if self.window == Some(next) {
+            return false;
+        }
+        self.window = Some(next);
+        true
+    }
+
     pub fn toggle_saved(&mut self, folder: &Path) {
         if self.is_saved(folder) {
             self.saved.retain(|p| p != folder);
@@ -104,6 +172,21 @@ impl Prefs {
             self.saved.insert(0, folder.to_path_buf());
         }
         self.save();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Prefs;
+
+    #[test]
+    fn rejects_tiny_or_invalid_window() {
+        assert!(Prefs::valid_window(10.0, 10.0, 100.0, 100.0).is_none());
+        assert!(Prefs::valid_window(f32::NAN, 10.0, 800.0, 600.0).is_none());
+        assert_eq!(
+            Prefs::valid_window(12.0, 40.0, 1200.0, 800.0),
+            Some((12.0, 40.0, 1200.0, 800.0))
+        );
     }
 }
 
