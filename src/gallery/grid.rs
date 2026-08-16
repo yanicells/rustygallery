@@ -1,4 +1,6 @@
-use gpui::{div, img, prelude::*, px, rgb, ClickEvent, Context, ObjectFit};
+use gpui::{
+    div, img, prelude::*, px, rgb, ClickEvent, Context, MouseButton, MouseDownEvent, ObjectFit,
+};
 
 use crate::media::{Entry, MediaKind};
 use crate::ui::Theme;
@@ -91,6 +93,12 @@ impl Gallery {
             .on_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
                 this.click_tile(index, event, cx);
             }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                    this.open_tile_menu(index, event.position, cx);
+                }),
+            )
             .child(
                 div()
                     .w(px(tile))
