@@ -14,9 +14,8 @@ impl Gallery {
         let pan = self.viewer.pan;
         let slideshow = self.slideshow;
         let t = Theme::DARK;
-        let label = format!(
-            "{}  ·  {} / {}  ·  {:.0}%{}",
-            item.name,
+        let meta = format!(
+            "·  {} / {}  ·  {:.0}%{}",
             index + 1,
             self.entries.len(),
             zoom * 100.0,
@@ -40,11 +39,32 @@ impl Gallery {
                     .gap_3()
                     .child(
                         div()
-                            .text_sm()
-                            .text_color(rgb(t.accent_soft))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .child(label),
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .min_w_0()
+                            .flex_1()
+                            .child(
+                                div()
+                                    .id("lightbox-name")
+                                    .text_sm()
+                                    .text_color(rgb(t.accent_soft))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.rename_focused(&super::RenameFocused, window, cx);
+                                    }))
+                                    .child(item.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(t.text_dim))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .child(meta),
+                            ),
                     )
                     .child(
                         div()
@@ -127,7 +147,9 @@ impl Gallery {
                     .py_2()
                     .text_xs()
                     .text_color(rgb(t.text_dim))
-                    .child("Scroll zoom · drag pan · double-click reset · ← → · S slideshow"),
+                    .child(
+                    "R rename · Scroll zoom · drag pan · double-click reset · ← → · S slideshow",
+                ),
             )
             .into_any_element()
     }

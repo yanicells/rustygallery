@@ -6,17 +6,22 @@ use std::{
 };
 
 use gpui::{
-    actions, prelude::*, Context, FocusHandle, Image, PathPromptOptions, SharedString,
-    Subscription, Window,
+    actions, prelude::*, Context, FocusHandle, Image, PathPromptOptions, Pixels, Point,
+    SharedString, Subscription, Window,
 };
 
-use crate::media::{load_or_make_thumb, scan_browse, scan_folder_recursive, Entry, MediaKind};
+use crate::media::{
+    create_folder, load_or_make_thumb, rename_path, scan_browse, scan_folder_recursive, Entry,
+    MediaKind,
+};
 use crate::prefs::Prefs;
 use crate::ui::SIDEBAR_W;
 
+mod context;
 mod density;
 mod grid;
 mod lightbox;
+mod name;
 mod search;
 mod sort;
 mod view;
@@ -64,11 +69,27 @@ actions!(
         ConfirmSearch,
         RevealInFinder,
         CopyPath,
+        NewFolder,
+        RenameFocused,
+        CloseName,
+        ConfirmName,
     ]
 );
 
 pub(crate) const PAD: f32 = 20.0;
 pub(crate) const GAP: f32 = 12.0;
+
+#[derive(Clone)]
+enum NameKind {
+    NewFolder,
+    NewFolderIn(PathBuf),
+    Rename(usize),
+}
+
+struct TileMenu {
+    index: usize,
+    pos: Point<Pixels>,
+}
 
 pub struct Gallery {
     root: PathBuf,
@@ -95,6 +116,13 @@ pub struct Gallery {
     search_open: bool,
     search_query: String,
     search_choice: usize,
+    name_focus: FocusHandle,
+    name_kind: Option<NameKind>,
+    name_query: String,
+    name_error: Option<String>,
+    context: Option<TileMenu>,
+    reload_focus: Option<PathBuf>,
+    reload_open: bool,
     _bounds: Option<Subscription>,
 }
 
@@ -103,6 +131,7 @@ impl Gallery {
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window);
         let search_focus = cx.focus_handle();
+        let name_focus = cx.focus_handle();
         let prefs = Prefs::load();
         let density = Density::from_pref(&prefs.density);
         let sort = SortKey::from_pref(&prefs.sort);
@@ -132,6 +161,13 @@ impl Gallery {
             search_open: false,
             search_query: String::new(),
             search_choice: 0,
+            name_focus,
+            name_kind: None,
+            name_query: String::new(),
+            name_error: None,
+            context: None,
+            reload_focus: None,
+            reload_open: false,
             _bounds: None,
         };
         gallery._bounds = Some(cx.observe_window_bounds(window, |this, window, _cx| {
@@ -164,6 +200,24 @@ impl Gallery {
     }
 
     fn begin_load(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
+        self.reload_focus = None;
+        self.reload_open = false;
+        self.load_folder(folder, cx);
+    }
+
+    fn reload_listing(
+        &mut self,
+        folder: PathBuf,
+        focus: PathBuf,
+        open: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.reload_focus = Some(focus);
+        self.reload_open = open;
+        self.load_folder(folder, cx);
+    }
+
+    fn load_folder(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
         self.folder = folder.clone();
         self.entries.clear();
         self.thumbs.clear();
@@ -198,11 +252,35 @@ impl Gallery {
                 this.entries = entries;
                 this.apply_sort();
                 this.loading = false;
-                this.focused = if this.entries.is_empty() {
-                    None
+                let restore = this.reload_focus.take();
+                let reopen = std::mem::take(&mut this.reload_open);
+                this.checked.clear();
+                this.anchor = None;
+                this.selected = None;
+                this.viewer = ViewerState::default();
+                if let Some(path) = restore {
+                    this.focused = this.entries.iter().position(|e| e.path() == path);
+                    if let Some(i) = this.focused {
+                        this.checked.insert(i);
+                        this.anchor = Some(i);
+                        if reopen
+                            && matches!(
+                                &this.entries[i],
+                                Entry::Media(m) if m.kind == MediaKind::Image
+                            )
+                        {
+                            this.selected = Some(i);
+                        }
+                    } else if !this.entries.is_empty() {
+                        this.focused = Some(0);
+                    }
                 } else {
-                    Some(0)
-                };
+                    this.focused = if this.entries.is_empty() {
+                        None
+                    } else {
+                        Some(0)
+                    };
+                }
                 this.queue_thumbs(cx);
                 cx.notify();
             })
@@ -322,6 +400,10 @@ impl Gallery {
     }
 
     fn close_viewer(&mut self, _: &CloseViewer, _: &mut Window, cx: &mut Context<Self>) {
+        if self.context.take().is_some() {
+            cx.notify();
+            return;
+        }
         if self.selected.take().is_some() {
             self.viewer = ViewerState::default();
             self.stop_slideshow();
@@ -832,6 +914,169 @@ impl Gallery {
             }
         }
         self.folder.display().to_string().into()
+    }
+
+    fn entry_file_name(entry: &Entry) -> String {
+        entry
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string()
+    }
+
+    fn open_name(&mut self, kind: NameKind, window: &mut Window, cx: &mut Context<Self>) {
+        self.context = None;
+        self.search_open = false;
+        self.search_query.clear();
+        self.search_choice = 0;
+        self.name_query = match &kind {
+            NameKind::NewFolder | NameKind::NewFolderIn(_) => String::new(),
+            NameKind::Rename(index) => self
+                .entries
+                .get(*index)
+                .map(Self::entry_file_name)
+                .unwrap_or_default(),
+        };
+        self.name_error = None;
+        self.name_kind = Some(kind);
+        self.name_focus.focus(window);
+        cx.notify();
+    }
+
+    fn close_name(&mut self, _: &CloseName, window: &mut Window, cx: &mut Context<Self>) {
+        if self.name_kind.take().is_none() {
+            return;
+        }
+        self.name_query.clear();
+        self.name_error = None;
+        self.focus_handle.focus(window);
+        cx.notify();
+    }
+
+    fn new_folder(&mut self, _: &NewFolder, window: &mut Window, cx: &mut Context<Self>) {
+        if self.prefs.flat_mode || self.name_kind.is_some() {
+            return;
+        }
+        self.open_name(NameKind::NewFolder, window, cx);
+    }
+
+    fn rename_focused(&mut self, _: &RenameFocused, window: &mut Window, cx: &mut Context<Self>) {
+        if self.name_kind.is_some() {
+            return;
+        }
+        let Some(index) = self.selected.or(self.focused) else {
+            return;
+        };
+        if self.entries.get(index).is_none() {
+            return;
+        }
+        self.open_name(NameKind::Rename(index), window, cx);
+    }
+
+    fn confirm_name(&mut self, _: &ConfirmName, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(kind) = self.name_kind.clone() else {
+            return;
+        };
+        let name = self.name_query.clone();
+        let result = match kind {
+            NameKind::NewFolder => {
+                if self.prefs.flat_mode {
+                    self.close_name(&CloseName, window, cx);
+                    return;
+                }
+                create_folder(&self.folder, &name, &self.root)
+                    .map(|path| (self.folder.clone(), path, false))
+            }
+            NameKind::NewFolderIn(parent) => {
+                create_folder(&parent, &name, &self.root).map(|path| (parent, path, false))
+            }
+            NameKind::Rename(index) => {
+                let Some(from) = self.entries.get(index).map(|e| e.path().to_path_buf()) else {
+                    self.close_name(&CloseName, window, cx);
+                    return;
+                };
+                let open = self.selected == Some(index);
+                rename_path(&from, &name, &self.root).map(|path| (self.folder.clone(), path, open))
+            }
+        };
+        match result {
+            Ok((folder, focus, open)) => {
+                self.close_name(&CloseName, window, cx);
+                self.reload_listing(folder, focus, open, cx);
+            }
+            Err(err) => {
+                self.name_error = Some(err.as_str().to_string());
+                cx.notify();
+            }
+        }
+    }
+
+    fn on_name_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.name_kind.is_none() {
+            return;
+        }
+        let key = event.keystroke.key.as_str();
+        if key == "backspace" {
+            self.name_query.pop();
+            self.name_error = None;
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        if let Some(ch) = event.keystroke.key_char.as_deref() {
+            if ch.chars().all(|c| !c.is_control()) && !event.keystroke.modifiers.control {
+                self.name_query.push_str(ch);
+                self.name_error = None;
+                cx.notify();
+                cx.stop_propagation();
+            }
+        }
+        let _ = window;
+    }
+
+    fn open_tile_menu(&mut self, index: usize, pos: Point<Pixels>, cx: &mut Context<Self>) {
+        if self.selected.is_some() || self.name_kind.is_some() || self.search_open {
+            return;
+        }
+        if !self.checked.contains(&index) {
+            self.checked.clear();
+            self.checked.insert(index);
+            self.anchor = Some(index);
+        }
+        self.focused = Some(index);
+        self.context = Some(TileMenu { index, pos });
+        cx.notify();
+    }
+
+    fn dismiss_context(&mut self, cx: &mut Context<Self>) {
+        if self.context.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn context_open(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.context = None;
+        self.open_entry(index, cx);
+    }
+
+    fn context_rename(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.context = None;
+        self.open_name(NameKind::Rename(index), window, cx);
+    }
+
+    fn context_new_folder(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(Entry::Folder(folder)) = self.entries.get(index).cloned() else {
+            self.dismiss_context(cx);
+            return;
+        };
+        self.context = None;
+        self.open_name(NameKind::NewFolderIn(folder.path), window, cx);
     }
 
     fn breadcrumb_parts(&self) -> Vec<(SharedString, Option<PathBuf>)> {
