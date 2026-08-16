@@ -8,14 +8,14 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use gpui::{
     actions, div, img, point, prelude::*, px, relative, rgb, size, App, Application, Bounds,
-    ClickEvent, Context, ElementId, FocusHandle, Image, KeyBinding, Menu, MenuItem, MouseButton,
+    ClickEvent, Context, FocusHandle, Image, KeyBinding, Menu, MenuItem, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, PathPromptOptions, Pixels, Point,
     ScrollWheelEvent, SharedString, SystemMenuType, TitlebarOptions, Window, WindowBounds,
     WindowOptions,
 };
 use media::{load_or_make_thumb, scan_browse, scan_folder_recursive, Entry, MediaKind};
 use prefs::Prefs;
-use ui::{Theme, SIDEBAR_W};
+use ui::{btn, sidebar_row, Theme, SIDEBAR_W};
 
 actions!(
     gallery,
@@ -563,70 +563,6 @@ impl Gallery {
         }
     }
 
-    fn btn(
-        id: impl Into<SharedString>,
-        label: impl Into<SharedString>,
-        active: bool,
-        prominent: bool,
-        cx: &Context<Self>,
-        on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>) + 'static,
-    ) -> impl IntoElement {
-        let id = id.into();
-        let t = Theme::DARK;
-        div()
-            .id(id)
-            .px_3()
-            .py_1p5()
-            .rounded_md()
-            .text_sm()
-            .cursor_pointer()
-            .when(prominent, |s| {
-                s.bg(rgb(t.prominent))
-                    .text_color(rgb(t.prominent_text))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .hover(|s| s.bg(rgb(t.prominent_hover)))
-            })
-            .when(!prominent && active, |s| {
-                s.bg(rgb(t.btn_active)).text_color(rgb(t.on_accent))
-            })
-            .when(!prominent && !active, |s| {
-                s.bg(rgb(t.btn))
-                    .text_color(rgb(t.btn_text))
-                    .hover(|s| s.bg(rgb(t.btn_hover)).text_color(rgb(t.on_accent)))
-            })
-            .child(label.into())
-            .on_click(cx.listener(on_click))
-    }
-
-    fn sidebar_row(
-        id: impl Into<ElementId>,
-        label: SharedString,
-        active: bool,
-        cx: &Context<Self>,
-        on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>) + 'static,
-    ) -> impl IntoElement {
-        let t = Theme::DARK;
-        div()
-            .id(id)
-            .w_full()
-            .px_2()
-            .py_1p5()
-            .rounded_md()
-            .text_sm()
-            .cursor_pointer()
-            .overflow_hidden()
-            .whitespace_nowrap()
-            .when(active, |s| {
-                s.bg(rgb(t.row_active)).text_color(rgb(t.on_accent))
-            })
-            .when(!active, |s| {
-                s.text_color(rgb(t.inactive))
-                    .hover(|s| s.bg(rgb(t.surface_hover)).text_color(rgb(t.text)))
-            })
-            .child(label)
-            .on_click(cx.listener(on_click))
-    }
-
     fn render_tile(
         &self,
         index: usize,
@@ -770,7 +706,7 @@ impl Gallery {
                         div()
                             .flex()
                             .gap_2()
-                            .child(Self::btn(
+                            .child(btn(
                                 "slide-btn",
                                 if slideshow { "Stop" } else { "Slideshow" },
                                 slideshow,
@@ -780,7 +716,7 @@ impl Gallery {
                                     this.toggle_slideshow(&ToggleSlideshow, window, cx);
                                 },
                             ))
-                            .child(Self::btn(
+                            .child(btn(
                                 "close-btn",
                                 "Close",
                                 false,
@@ -943,7 +879,7 @@ impl Render for Gallery {
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .child("gallery"),
                             )
-                            .child(Self::btn(
+                            .child(btn(
                                 "open-sidebar",
                                 "Open Folder",
                                 false,
@@ -981,7 +917,7 @@ impl Render for Gallery {
                                     .to_string()
                                     .into();
                                 let active = path == current_root;
-                                Self::sidebar_row(
+                                sidebar_row(
                                     ("saved", i),
                                     label,
                                     active,
@@ -1013,7 +949,7 @@ impl Render for Gallery {
                                     .to_string()
                                     .into();
                                 let active = path == current_root;
-                                Self::sidebar_row(
+                                sidebar_row(
                                     ("recent", i),
                                     label,
                                     active,
@@ -1055,7 +991,7 @@ impl Render for Gallery {
                                             .gap_2()
                                             .min_w_0()
                                             .flex_1()
-                                            .child(Self::btn(
+                                            .child(btn(
                                                 "back",
                                                 "← Back",
                                                 false,
@@ -1093,7 +1029,7 @@ impl Render for Gallery {
                                             .flex()
                                             .items_center()
                                             .gap_2()
-                                            .child(Self::btn(
+                                            .child(btn(
                                                 "save",
                                                 if saved { "Saved ★" } else { "Save" },
                                                 saved,
@@ -1103,7 +1039,7 @@ impl Render for Gallery {
                                                     this.toggle_saved(&ToggleSaved, window, cx);
                                                 },
                                             ))
-                                            .child(Self::btn(
+                                            .child(btn(
                                                 "flat",
                                                 if flat { "Flat" } else { "Folders" },
                                                 flat,
@@ -1117,7 +1053,7 @@ impl Render for Gallery {
                                                 div()
                                                     .flex()
                                                     .gap_1()
-                                                    .child(Self::btn(
+                                                    .child(btn(
                                                         "d-s",
                                                         Density::Small.label(),
                                                         density == Density::Small,
@@ -1127,7 +1063,7 @@ impl Render for Gallery {
                                                             this.set_density(Density::Small, cx)
                                                         },
                                                     ))
-                                                    .child(Self::btn(
+                                                    .child(btn(
                                                         "d-m",
                                                         Density::Medium.label(),
                                                         density == Density::Medium,
@@ -1137,7 +1073,7 @@ impl Render for Gallery {
                                                             this.set_density(Density::Medium, cx)
                                                         },
                                                     ))
-                                                    .child(Self::btn(
+                                                    .child(btn(
                                                         "d-l",
                                                         Density::Large.label(),
                                                         density == Density::Large,
@@ -1148,7 +1084,7 @@ impl Render for Gallery {
                                                         },
                                                     )),
                                             )
-                                            .child(Self::btn(
+                                            .child(btn(
                                                 "slideshow",
                                                 if slideshow { "Stop" } else { "Slideshow" },
                                                 slideshow,
@@ -1195,7 +1131,7 @@ impl Render for Gallery {
                                                 .text_color(rgb(t.text_dim))
                                                 .child("Nothing here yet."),
                                         )
-                                        .child(Self::btn(
+                                        .child(btn(
                                             "open-empty",
                                             "Open Folder",
                                             false,
