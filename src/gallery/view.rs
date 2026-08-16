@@ -36,13 +36,8 @@ impl Render for Gallery {
             .filter(|(_, e)| matches!(e, Entry::Folder(_)))
             .count();
         let media = visible_count.saturating_sub(folders);
-        let status: SharedString = if loading {
-            "Loading…".into()
-        } else if flat {
-            format!("{media} media").into()
-        } else {
-            format!("{folders} folders · {media} media").into()
-        };
+        let status_left = self.status_left(folders, media);
+        let status_path = self.status_path();
         let filter = self.filter;
         let sort = self.sort;
         let sort_desc = self.sort_desc;
@@ -80,6 +75,8 @@ impl Render for Gallery {
             .on_action(cx.listener(Self::filter_images))
             .on_action(cx.listener(Self::filter_videos))
             .on_action(cx.listener(Self::toggle_search))
+            .on_action(cx.listener(Self::reveal_in_finder))
+            .on_action(cx.listener(Self::copy_path))
             .size_full()
             .flex()
             .flex_row()
@@ -448,13 +445,7 @@ impl Render for Gallery {
                                                         cx,
                                                     );
                                                 },
-                                            ))
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .text_color(rgb(t.text_muted))
-                                                    .child(status),
-                                            ),
+                                            )),
                                     ),
                             ),
                     )
@@ -526,6 +517,35 @@ impl Render for Gallery {
                                         })),
                                 )
                             }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .px_4()
+                            .py_2()
+                            .border_t_1()
+                            .border_color(rgb(t.border))
+                            .bg(rgb(t.surface))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(t.text_muted))
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .child(status_left),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(t.text_dim))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .child(status_path),
+                            ),
                     ),
             );
 
