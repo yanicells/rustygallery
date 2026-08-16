@@ -15,7 +15,7 @@ impl Render for Gallery {
         let slideshow = self.slideshow;
         let flat = self.prefs.flat_mode;
         let saved = self.prefs.is_saved(&self.root);
-        let crumb = self.breadcrumb();
+        let crumbs = self.breadcrumb_parts();
         let folder_full: SharedString = self.folder.display().to_string().into();
 
         let folders = self
@@ -217,11 +217,40 @@ impl Render for Gallery {
                                                     .min_w_0()
                                                     .child(
                                                         div()
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_1()
                                                             .text_sm()
-                                                            .font_weight(gpui::FontWeight::MEDIUM)
                                                             .overflow_hidden()
-                                                            .whitespace_nowrap()
-                                                            .child(crumb),
+                                                            .children(crumbs.into_iter().enumerate().flat_map(|(i, (label, path))| {
+                                                                let t = Theme::DARK;
+                                                                let mut bits = Vec::new();
+                                                                if i > 0 {
+                                                                    bits.push(
+                                                                        div()
+                                                                            .text_color(rgb(t.text_faint))
+                                                                            .child("/")
+                                                                            .into_any_element(),
+                                                                    );
+                                                                }
+                                                                bits.push(match path {
+                                                                    Some(path) => div()
+                                                                        .id(("crumb", i))
+                                                                        .cursor_pointer()
+                                                                        .text_color(rgb(t.text_dim))
+                                                                        .hover(|s| s.text_color(rgb(t.text)))
+                                                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                                                            this.open_crumb(path.clone(), cx);
+                                                                        }))
+                                                                        .child(label)
+                                                                        .into_any_element(),
+                                                                    None => div()
+                                                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                                                        .child(label)
+                                                                        .into_any_element(),
+                                                                });
+                                                                bits
+                                                            })),
                                                     )
                                                     .child(
                                                         div()
