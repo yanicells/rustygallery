@@ -12,6 +12,9 @@ use crate::gallery::{
 };
 use crate::prefs::Prefs;
 
+#[cfg(target_os = "macos")]
+mod tray;
+
 pub fn resolve_folder() -> PathBuf {
     if let Some(arg) = std::env::args().nth(1) {
         let path = PathBuf::from(arg);
@@ -108,5 +111,5 @@ pub fn start(folder: PathBuf, cx: &mut App) {
     cx.activate(true);
 
     #[cfg(target_os = "macos")]
-    crate::tray::install();
+    tray::install();
 }

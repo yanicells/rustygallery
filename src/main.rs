@@ -2,8 +2,6 @@ mod app;
 mod gallery;
 mod media;
 mod prefs;
-#[cfg(target_os = "macos")]
-mod tray;
 mod ui;
 
 use gpui::Application;
