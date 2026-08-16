@@ -1,0 +1,112 @@
+use std::path::PathBuf;
+
+use gpui::{
+    prelude::*, px, size, App, Bounds, KeyBinding, Menu, MenuItem, SystemMenuType, TitlebarOptions,
+    WindowBounds, WindowOptions,
+};
+
+use crate::gallery::{
+    CloseViewer, DensityLarge, DensityMedium, DensitySmall, Gallery, GoUp, MoveDown, MoveLeft,
+    MoveRight, MoveUp, NextItem, OpenFocused, OpenFolder, Quit, ResetZoom, ToggleFlat, ToggleSaved,
+    ToggleSlideshow,
+};
+use crate::prefs::Prefs;
+
+pub fn resolve_folder() -> PathBuf {
+    if let Some(arg) = std::env::args().nth(1) {
+        let path = PathBuf::from(arg);
+        return path.canonicalize().unwrap_or(path);
+    }
+    let prefs = Prefs::load();
+    if let Some(recent) = prefs.recents.first() {
+        return recent.clone();
+    }
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("media");
+    path.canonicalize().unwrap_or(path)
+}
+
+pub fn start(folder: PathBuf, cx: &mut App) {
+    cx.activate(true);
+    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.bind_keys([
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-o", OpenFolder, Some("Gallery")),
+        KeyBinding::new("cmd-up", GoUp, Some("Gallery")),
+        KeyBinding::new("backspace", GoUp, Some("Gallery")),
+        KeyBinding::new("escape", CloseViewer, Some("Gallery")),
+        KeyBinding::new("right", MoveRight, Some("Gallery")),
+        KeyBinding::new("left", MoveLeft, Some("Gallery")),
+        KeyBinding::new("up", MoveUp, Some("Gallery")),
+        KeyBinding::new("down", MoveDown, Some("Gallery")),
+        KeyBinding::new("enter", OpenFocused, Some("Gallery")),
+        KeyBinding::new("space", NextItem, Some("Gallery")),
+        KeyBinding::new("1", DensitySmall, Some("Gallery")),
+        KeyBinding::new("2", DensityMedium, Some("Gallery")),
+        KeyBinding::new("3", DensityLarge, Some("Gallery")),
+        KeyBinding::new("s", ToggleSlideshow, Some("Gallery")),
+        KeyBinding::new("f", ToggleFlat, Some("Gallery")),
+        KeyBinding::new("cmd-d", ToggleSaved, Some("Gallery")),
+        KeyBinding::new("0", ResetZoom, Some("Gallery")),
+    ]);
+    cx.set_menus(vec![
+        Menu {
+            name: "gallery".into(),
+            items: vec![
+                MenuItem::os_submenu("Services", SystemMenuType::Services),
+                MenuItem::separator(),
+                MenuItem::action("Quit", Quit),
+            ],
+        },
+        Menu {
+            name: "File".into(),
+            items: vec![
+                MenuItem::action("Open Folder…", OpenFolder),
+                MenuItem::action("Go Up", GoUp),
+                MenuItem::separator(),
+                MenuItem::action("Save Library", ToggleSaved),
+            ],
+        },
+        Menu {
+            name: "View".into(),
+            items: vec![
+                MenuItem::action("Folders / Flat", ToggleFlat),
+                MenuItem::separator(),
+                MenuItem::action("Density Small", DensitySmall),
+                MenuItem::action("Density Medium", DensityMedium),
+                MenuItem::action("Density Large", DensityLarge),
+            ],
+        },
+        Menu {
+            name: "Playback".into(),
+            items: vec![
+                MenuItem::action("Slideshow", ToggleSlideshow),
+                MenuItem::action("Reset Zoom", ResetZoom),
+            ],
+        },
+    ]);
+
+    let title = format!("gallery — {}", folder.display());
+    let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
+
+    cx.open_window(
+        WindowOptions {
+            titlebar: Some(TitlebarOptions {
+                title: Some(title.into()),
+                appears_transparent: false,
+                ..Default::default()
+            }),
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            focus: true,
+            ..Default::default()
+        },
+        |window, cx| cx.new(|cx| Gallery::new(folder.clone(), window, cx)),
+    )
+    .unwrap();
+
+    // Re-activate after the window exists so the macOS menu bar
+    // switches away from the parent (Terminal / IDE) to this app.
+    cx.activate(true);
+
+    #[cfg(target_os = "macos")]
+    crate::tray::install();
+}
