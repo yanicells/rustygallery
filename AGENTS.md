@@ -5,9 +5,12 @@ Short rules for working on this repo.
 ## Workflow
 
 1. **Issue first** — open or pick a GitHub issue before coding. No drive-by features.
-2. **PR per batch** — one PR for a related set of issues (not one giant PR, not one commit-per-typo spam either).
-3. **Link issues** — reference `#N` in commits/PR body; close with `Fixes #N` when done.
-4. **Stay minimal** — smallest change that solves the issue. No speculative abstractions.
+2. **Batch issues** — one PR for a related set of issues (not one giant PR, not one issue per typo).
+3. **Stack PRs** — sequential work is stacked (each PR targets the previous branch). Merge bottom-up.
+4. **PR shape** — about 70% what/why (purpose and outcome), 30% technical detail.
+5. **Link issues** — reference `#N` in commits/PR body; close with `Fixes #N` when done.
+6. **Stay minimal** — smallest change that solves the issue. No speculative abstractions.
+7. **Commit often** — many small commits with a clear why. Prefer a trail of reviewable steps over one dump.
 
 ## Before big feature work
 
