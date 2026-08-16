@@ -10,6 +10,8 @@ pub struct Prefs {
     pub flat_mode: bool,
     pub seen_open: bool,
     pub density: String,
+    pub sort: String,
+    pub sort_desc: bool,
     pub window: Option<(f32, f32, f32, f32)>,
 }
 
@@ -21,6 +23,8 @@ impl Default for Prefs {
             flat_mode: false,
             seen_open: false,
             density: "medium".into(),
+            sort: "name".into(),
+            sort_desc: false,
             window: None,
         }
     }
@@ -61,6 +65,10 @@ impl Prefs {
                     _ => {
                         if let Some(value) = line.strip_prefix("density=") {
                             prefs.density = value.to_string();
+                        } else if let Some(value) = line.strip_prefix("sort=") {
+                            prefs.sort = value.to_string();
+                        } else if line == "sort_desc=1" {
+                            prefs.sort_desc = true;
                         }
                     }
                 },
@@ -107,6 +115,12 @@ impl Prefs {
         out.push_str("density=");
         out.push_str(&self.density);
         out.push('\n');
+        out.push_str("sort=");
+        out.push_str(&self.sort);
+        out.push('\n');
+        if self.sort_desc {
+            out.push_str("sort_desc=1\n");
+        }
         if let Some((x, y, w, h)) = self.window {
             out.push_str("\n[window]\n");
             out.push_str(&format!("x={x}\ny={y}\nw={w}\nh={h}\n"));

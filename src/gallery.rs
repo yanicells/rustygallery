@@ -12,11 +12,21 @@ use crate::ui::SIDEBAR_W;
 mod density;
 mod grid;
 mod lightbox;
+mod search;
+mod sort;
 mod view;
 mod viewer;
 
 use density::Density;
+use sort::{sort_entries, SortKey};
 use viewer::ViewerState;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Filter {
+    All,
+    Images,
+    Videos,
+}
 
 actions!(
     gallery,
@@ -39,6 +49,14 @@ actions!(
         ToggleFlat,
         ToggleSaved,
         ResetZoom,
+        CycleSort,
+        ToggleSortDir,
+        FilterAll,
+        FilterImages,
+        FilterVideos,
+        ToggleSearch,
+        CloseSearch,
+        ConfirmSearch,
     ]
 );
 
@@ -61,6 +79,13 @@ pub struct Gallery {
     slideshow: bool,
     slideshow_gen: u64,
     focus_handle: FocusHandle,
+    search_focus: FocusHandle,
+    filter: Filter,
+    sort: SortKey,
+    sort_desc: bool,
+    search_open: bool,
+    search_query: String,
+    search_choice: usize,
     _bounds: Option<Subscription>,
 }
 
@@ -68,8 +93,11 @@ impl Gallery {
     pub fn new(folder: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window);
+        let search_focus = cx.focus_handle();
         let prefs = Prefs::load();
         let density = Density::from_pref(&prefs.density);
+        let sort = SortKey::from_pref(&prefs.sort);
+        let sort_desc = prefs.sort_desc;
         let mut gallery = Self {
             root: folder.clone(),
             folder: folder.clone(),
@@ -86,6 +114,13 @@ impl Gallery {
             slideshow: false,
             slideshow_gen: 0,
             focus_handle,
+            search_focus,
+            filter: Filter::All,
+            sort,
+            sort_desc,
+            search_open: false,
+            search_query: String::new(),
+            search_choice: 0,
             _bounds: None,
         };
         gallery._bounds = Some(cx.observe_window_bounds(window, |this, window, _cx| {
@@ -148,6 +183,7 @@ impl Gallery {
                     return;
                 }
                 this.entries = entries;
+                this.apply_sort();
                 this.loading = false;
                 this.focused = if this.entries.is_empty() {
                     None
@@ -287,17 +323,21 @@ impl Gallery {
     }
 
     fn move_focus(&mut self, delta: isize, wrap: bool, cx: &mut Context<Self>) {
-        if self.selected.is_some() || self.entries.is_empty() {
+        let vis = self.visible_indices();
+        if self.selected.is_some() || vis.is_empty() {
             return;
         }
-        let len = self.entries.len() as isize;
-        let cur = self.focused.unwrap_or(0) as isize;
+        let cur = self
+            .focused
+            .and_then(|f| vis.iter().position(|&i| i == f))
+            .unwrap_or(0) as isize;
+        let len = vis.len() as isize;
         let next = if wrap {
             (cur + delta).rem_euclid(len)
         } else {
             (cur + delta).clamp(0, len - 1)
         };
-        self.focused = Some(next as usize);
+        self.focused = Some(vis[next as usize]);
         cx.notify();
     }
 
@@ -359,7 +399,9 @@ impl Gallery {
         let mut i = start.rem_euclid(len);
         for _ in 0..self.entries.len() {
             let idx = i as usize;
-            if matches!(&self.entries[idx], Entry::Media(m) if m.kind == MediaKind::Image) {
+            if matches!(&self.entries[idx], Entry::Media(m) if m.kind == MediaKind::Image)
+                && self.entry_visible(&self.entries[idx])
+            {
                 self.selected = Some(idx);
                 self.focused = Some(idx);
                 self.viewer = ViewerState::default();
@@ -474,6 +516,164 @@ impl Gallery {
             self.viewer = ViewerState::default();
             cx.notify();
         }
+    }
+
+    fn apply_sort(&mut self) {
+        sort_entries(&mut self.entries, self.sort, self.sort_desc);
+    }
+
+    fn persist_sort(&mut self) {
+        self.prefs.sort = self.sort.as_pref().to_string();
+        self.prefs.sort_desc = self.sort_desc;
+        self.prefs.save();
+    }
+
+    pub(crate) fn entry_visible(&self, entry: &Entry) -> bool {
+        match self.filter {
+            Filter::All => true,
+            Filter::Images => matches!(entry, Entry::Media(m) if m.kind == MediaKind::Image),
+            Filter::Videos => matches!(entry, Entry::Media(m) if m.kind == MediaKind::Video),
+        }
+    }
+
+    fn visible_indices(&self) -> Vec<usize> {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| self.entry_visible(e).then_some(i))
+            .collect()
+    }
+
+    fn set_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
+        if self.filter == filter {
+            return;
+        }
+        self.filter = filter;
+        let vis = self.visible_indices();
+        if let Some(f) = self.focused {
+            if !vis.contains(&f) {
+                self.focused = vis.first().copied();
+            }
+        }
+        if let Some(s) = self.selected {
+            if !vis.contains(&s) {
+                self.selected = None;
+                self.stop_slideshow();
+            }
+        }
+        cx.notify();
+    }
+
+    fn filter_all(&mut self, _: &FilterAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_filter(Filter::All, cx);
+    }
+    fn filter_images(&mut self, _: &FilterImages, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_filter(Filter::Images, cx);
+    }
+    fn filter_videos(&mut self, _: &FilterVideos, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_filter(Filter::Videos, cx);
+    }
+
+    fn cycle_sort(&mut self, _: &CycleSort, _: &mut Window, cx: &mut Context<Self>) {
+        self.sort = self.sort.next();
+        self.apply_sort();
+        self.persist_sort();
+        cx.notify();
+    }
+
+    fn toggle_sort_dir(&mut self, _: &ToggleSortDir, _: &mut Window, cx: &mut Context<Self>) {
+        self.sort_desc = !self.sort_desc;
+        self.apply_sort();
+        self.persist_sort();
+        cx.notify();
+    }
+
+    fn search_hits(&self) -> Vec<usize> {
+        let q = self.search_query.to_lowercase();
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| {
+                if !self.entry_visible(e) {
+                    return None;
+                }
+                e.name().to_lowercase().contains(&q).then_some(i)
+            })
+            .collect()
+    }
+
+    fn toggle_search(&mut self, _: &ToggleSearch, window: &mut Window, cx: &mut Context<Self>) {
+        if self.search_open {
+            self.close_search(&CloseSearch, window, cx);
+            return;
+        }
+        self.search_open = true;
+        self.search_query.clear();
+        self.search_choice = 0;
+        self.search_focus.focus(window);
+        cx.notify();
+    }
+
+    fn close_search(&mut self, _: &CloseSearch, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.search_open {
+            return;
+        }
+        self.search_open = false;
+        self.search_query.clear();
+        self.search_choice = 0;
+        self.focus_handle.focus(window);
+        cx.notify();
+    }
+
+    fn confirm_search(&mut self, _: &ConfirmSearch, window: &mut Window, cx: &mut Context<Self>) {
+        let hits = self.search_hits();
+        let Some(&index) = hits.get(self.search_choice) else {
+            self.close_search(&CloseSearch, window, cx);
+            return;
+        };
+        self.close_search(&CloseSearch, window, cx);
+        self.open_entry(index, cx);
+    }
+
+    fn on_search_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.search_open {
+            return;
+        }
+        let key = event.keystroke.key.as_str();
+        if key == "backspace" {
+            self.search_query.pop();
+            self.search_choice = 0;
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        if key == "up" {
+            self.search_choice = self.search_choice.saturating_sub(1);
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        if key == "down" {
+            let last = self.search_hits().len().saturating_sub(1);
+            self.search_choice = (self.search_choice + 1).min(last);
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        if let Some(ch) = event.keystroke.key_char.as_deref() {
+            if ch.chars().all(|c| !c.is_control()) && !event.keystroke.modifiers.control {
+                self.search_query.push_str(ch);
+                self.search_choice = 0;
+                cx.notify();
+                cx.stop_propagation();
+            }
+        }
+        let _ = window;
     }
 
     fn breadcrumb_parts(&self) -> Vec<(SharedString, Option<PathBuf>)> {
