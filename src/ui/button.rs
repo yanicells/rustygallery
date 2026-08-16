@@ -36,3 +36,19 @@ pub fn btn<T: 'static>(
         .child(label.into())
         .on_click(cx.listener(on_click))
 }
+
+pub fn btn_disabled(
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+) -> impl IntoElement {
+    let t = Theme::DARK;
+    div()
+        .id(id.into())
+        .px_3()
+        .py_1p5()
+        .rounded_md()
+        .text_sm()
+        .bg(rgb(t.btn))
+        .text_color(rgb(t.text_hint))
+        .child(label.into())
+}

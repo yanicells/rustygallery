@@ -1,7 +1,7 @@
 use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
 
 use crate::media::Entry;
-use crate::ui::{btn, sidebar_row, Theme, SIDEBAR_W};
+use crate::ui::{btn, btn_disabled, sidebar_row, Theme, SIDEBAR_W};
 
 use super::{density::Density, Gallery, GoUp, ToggleFlat, ToggleSaved, ToggleSlideshow, GAP, PAD};
 
@@ -16,6 +16,7 @@ impl Render for Gallery {
         let flat = self.prefs.flat_mode;
         let saved = self.prefs.is_saved(&self.root);
         let crumbs = self.breadcrumb_parts();
+        let can_go_up = self.can_go_up();
         let folder_full: SharedString = self.folder.display().to_string().into();
 
         let folders = self
@@ -200,16 +201,21 @@ impl Render for Gallery {
                                             .gap_2()
                                             .min_w_0()
                                             .flex_1()
-                                            .child(btn(
-                                                "back",
-                                                "← Back",
-                                                false,
-                                                false,
-                                                cx,
-                                                |this, _, window, cx| {
-                                                    this.go_up(&GoUp, window, cx);
-                                                },
-                                            ))
+                                            .child(if can_go_up {
+                                                btn(
+                                                    "back",
+                                                    "← Back",
+                                                    false,
+                                                    false,
+                                                    cx,
+                                                    |this, _, window, cx| {
+                                                        this.go_up(&GoUp, window, cx);
+                                                    },
+                                                )
+                                                .into_any_element()
+                                            } else {
+                                                btn_disabled("back", "← Back").into_any_element()
+                                            })
                                             .child(
                                                 div()
                                                     .flex()
