@@ -1,6 +1,5 @@
 mod media;
 mod prefs;
-mod thumbs;
 #[cfg(target_os = "macos")]
 mod tray;
 
@@ -13,9 +12,8 @@ use gpui::{
     ScrollWheelEvent, SharedString, SystemMenuType, TitlebarOptions, Window, WindowBounds,
     WindowOptions,
 };
-use media::{scan_browse, scan_folder_recursive, Entry, MediaKind};
+use media::{load_or_make_thumb, scan_browse, scan_folder_recursive, Entry, MediaKind};
 use prefs::Prefs;
-use thumbs::load_or_make_thumb;
 
 actions!(
     gallery,
@@ -471,23 +469,19 @@ impl Gallery {
         let gen = self.slideshow_gen;
         cx.notify();
 
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_secs(3))
-                    .await;
-                let cont = this
-                    .update(cx, |this, cx| {
-                        if !this.slideshow || this.slideshow_gen != gen {
-                            return false;
-                        }
-                        this.step_image(1, cx);
-                        true
-                    })
-                    .unwrap_or(false);
-                if !cont {
-                    break;
-                }
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(3)).await;
+            let cont = this
+                .update(cx, |this, cx| {
+                    if !this.slideshow || this.slideshow_gen != gen {
+                        return false;
+                    }
+                    this.step_image(1, cx);
+                    true
+                })
+                .unwrap_or(false);
+            if !cont {
+                break;
             }
         })
         .detach();
@@ -648,11 +642,7 @@ impl Gallery {
                 .gap_2()
                 .bg(rgb(0x1c1c1c))
                 .text_color(rgb(0xd0d0d0))
-                .child(
-                    div()
-                        .text_xl()
-                        .child("📁"),
-                )
+                .child(div().text_xl().child("📁"))
                 .child(div().text_xs().text_color(rgb(0x888888)).child("folder"))
                 .into_any_element(),
             Entry::Media(item) if item.kind == MediaKind::Video => div()
@@ -714,7 +704,11 @@ impl Gallery {
                     .w(px(tile))
                     .px_1()
                     .text_xs()
-                    .text_color(if focused { rgb(0xf0f0f0) } else { rgb(0x8a8a8a) })
+                    .text_color(if focused {
+                        rgb(0xf0f0f0)
+                    } else {
+                        rgb(0x8a8a8a)
+                    })
                     .whitespace_nowrap()
                     .overflow_hidden()
                     .child(name),
@@ -774,12 +768,19 @@ impl Gallery {
                                     this.toggle_slideshow(&ToggleSlideshow, window, cx);
                                 },
                             ))
-                            .child(Self::btn("close-btn", "Close", false, false, cx, |this, _, _, cx| {
-                                this.selected = None;
-                                this.viewer = ViewerState::default();
-                                this.stop_slideshow();
-                                cx.notify();
-                            })),
+                            .child(Self::btn(
+                                "close-btn",
+                                "Close",
+                                false,
+                                false,
+                                cx,
+                                |this, _, _, cx| {
+                                    this.selected = None;
+                                    this.viewer = ViewerState::default();
+                                    this.stop_slideshow();
+                                    cx.notify();
+                                },
+                            )),
                     ),
             )
             .child(
@@ -827,7 +828,15 @@ impl Gallery {
             .map(|p| p.to_string_lossy().replace('\\', "/"))
             .filter(|s| !s.is_empty());
         match rel {
-            Some(rel) => format!("{} / {}", self.root.file_name().and_then(|n| n.to_str()).unwrap_or("library"), rel).into(),
+            Some(rel) => format!(
+                "{} / {}",
+                self.root
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("library"),
+                rel
+            )
+            .into(),
             None => self
                 .root
                 .file_name()
@@ -852,7 +861,11 @@ impl Render for Gallery {
         let crumb = self.breadcrumb();
         let folder_full: SharedString = self.folder.display().to_string().into();
 
-        let folders = self.entries.iter().filter(|e| matches!(e, Entry::Folder(_))).count();
+        let folders = self
+            .entries
+            .iter()
+            .filter(|e| matches!(e, Entry::Folder(_)))
+            .count();
         let media = count.saturating_sub(folders);
         let status: SharedString = if loading {
             "Loading…".into()
@@ -955,9 +968,15 @@ impl Render for Gallery {
                                     .to_string()
                                     .into();
                                 let active = path == current_root;
-                                Self::sidebar_row(("saved", i), label, active, cx, move |this, _, _, cx| {
-                                    this.open_library(path.clone(), true, cx);
-                                })
+                                Self::sidebar_row(
+                                    ("saved", i),
+                                    label,
+                                    active,
+                                    cx,
+                                    move |this, _, _, cx| {
+                                        this.open_library(path.clone(), true, cx);
+                                    },
+                                )
                             })),
                     )
                     .child(
@@ -981,9 +1000,15 @@ impl Render for Gallery {
                                     .to_string()
                                     .into();
                                 let active = path == current_root;
-                                Self::sidebar_row(("recent", i), label, active, cx, move |this, _, _, cx| {
-                                    this.open_library(path.clone(), true, cx);
-                                })
+                                Self::sidebar_row(
+                                    ("recent", i),
+                                    label,
+                                    active,
+                                    cx,
+                                    move |this, _, _, cx| {
+                                        this.open_library(path.clone(), true, cx);
+                                    },
+                                )
                             })),
                     ),
             )
@@ -1117,7 +1142,11 @@ impl Render for Gallery {
                                                 false,
                                                 cx,
                                                 |this, _, window, cx| {
-                                                    this.toggle_slideshow(&ToggleSlideshow, window, cx);
+                                                    this.toggle_slideshow(
+                                                        &ToggleSlideshow,
+                                                        window,
+                                                        cx,
+                                                    );
                                                 },
                                             ))
                                             .child(
@@ -1137,9 +1166,10 @@ impl Render for Gallery {
                             .overflow_y_scroll()
                             .p(px(PAD))
                             .when(loading, |s| {
-                                s.flex().items_center().justify_center().child(
-                                    div().text_color(rgb(0x777777)).child("Loading folder…"),
-                                )
+                                s.flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(div().text_color(rgb(0x777777)).child("Loading folder…"))
                             })
                             .when(!loading && count == 0, |s| {
                                 s.flex().items_center().justify_center().child(
@@ -1171,17 +1201,17 @@ impl Render for Gallery {
                                         .flex_row()
                                         .flex_wrap()
                                         .gap(px(GAP))
-                                        .children(
-                                            self.entries.iter().enumerate().map(|(i, entry)| {
-                                                self.render_tile(i, entry, tile, cx)
-                                            }),
-                                        ),
+                                        .children(self.entries.iter().enumerate().map(
+                                            |(i, entry)| self.render_tile(i, entry, tile, cx),
+                                        )),
                                 )
                             }),
                     ),
             );
 
-        root.when_some(selected, |s, index| s.child(self.render_lightbox(index, cx)))
+        root.when_some(selected, |s, index| {
+            s.child(self.render_lightbox(index, cx))
+        })
     }
 }
 

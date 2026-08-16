@@ -11,7 +11,7 @@ use gpui::{Image, ImageFormat};
 
 const THUMB_MAX: u32 = 320;
 
-pub fn cache_dir() -> PathBuf {
+fn cache_dir() -> PathBuf {
     let dir = std::env::temp_dir().join("rusty-gallery-thumbs");
     let _ = fs::create_dir_all(&dir);
     dir
@@ -48,9 +48,7 @@ pub fn load_or_make_thumb(path: &Path) -> Option<Arc<Image>> {
     let mut bytes = Vec::new();
     {
         let mut cursor = Cursor::new(&mut bytes);
-        thumb
-            .write_to(&mut cursor, image::ImageFormat::Jpeg)
-            .ok()?;
+        thumb.write_to(&mut cursor, image::ImageFormat::Jpeg).ok()?;
     }
     let _ = fs::write(&cache_path, &bytes);
     Some(Arc::new(Image::from_bytes(ImageFormat::Jpeg, bytes)))
