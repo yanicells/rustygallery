@@ -7,6 +7,8 @@ use super::{density::Density, Gallery, GoUp, ToggleFlat, ToggleSaved, ToggleSlid
 
 impl Render for Gallery {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        window.set_window_title(&format!("gallery — {}", self.folder.display()));
+
         let (_, tile) = self.layout(window);
         let count = self.entries.len();
         let selected = self.selected;
