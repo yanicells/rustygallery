@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use gpui::{
-    prelude::*, px, size, App, Bounds, KeyBinding, Menu, MenuItem, SystemMenuType, TitlebarOptions,
-    WindowBounds, WindowOptions,
+    point, prelude::*, px, size, App, Bounds, KeyBinding, Menu, MenuItem, Pixels, SystemMenuType,
+    TitlebarOptions, WindowBounds, WindowOptions,
 };
 
 use crate::gallery::{
@@ -89,7 +89,7 @@ pub fn start(folder: PathBuf, cx: &mut App) {
     ]);
 
     let title = format!("gallery — {}", folder.display());
-    let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
+    let bounds = restore_bounds(cx);
 
     cx.open_window(
         WindowOptions {
@@ -112,4 +112,15 @@ pub fn start(folder: PathBuf, cx: &mut App) {
 
     #[cfg(target_os = "macos")]
     tray::install();
+}
+
+fn restore_bounds(cx: &App) -> Bounds<Pixels> {
+    let prefs = Prefs::load();
+    if let Some((x, y, w, h)) = prefs.window {
+        return Bounds {
+            origin: point(px(x), px(y)),
+            size: size(px(w), px(h)),
+        };
+    }
+    Bounds::centered(None, size(px(1200.), px(800.)), cx)
 }
