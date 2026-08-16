@@ -14,6 +14,7 @@ impl Gallery {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focused = self.focused == Some(index);
+        let checked = self.checked.contains(&index);
         let name = entry.name().clone();
         let t = Theme::DARK;
 
@@ -87,8 +88,8 @@ impl Gallery {
             .flex_col()
             .gap_1()
             .cursor_pointer()
-            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                this.open_entry(index, cx);
+            .on_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
+                this.click_tile(index, event, cx);
             }))
             .child(
                 div()
@@ -98,8 +99,9 @@ impl Gallery {
                     .rounded_md()
                     .bg(rgb(t.tile))
                     .border_2()
-                    .when(focused, |s| s.border_color(rgb(t.accent)))
-                    .when(!focused, |s| s.border_color(rgb(t.tile)))
+                    .when(checked, |s| s.border_color(rgb(t.accent)))
+                    .when(!checked && focused, |s| s.border_color(rgb(t.accent_soft)))
+                    .when(!checked && !focused, |s| s.border_color(rgb(t.tile)))
                     .child(media),
             )
             .child(
@@ -107,7 +109,7 @@ impl Gallery {
                     .w(px(tile))
                     .px_1()
                     .text_xs()
-                    .text_color(if focused {
+                    .text_color(if checked || focused {
                         rgb(t.accent)
                     } else {
                         rgb(t.name_idle)
