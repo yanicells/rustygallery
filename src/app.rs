@@ -6,10 +6,10 @@ use gpui::{
 };
 
 use crate::gallery::{
-    CloseSearch, CloseViewer, ConfirmSearch, CycleSort, DensityLarge, DensityMedium, DensitySmall,
-    FilterAll, FilterImages, FilterVideos, Gallery, GoUp, MoveDown, MoveLeft, MoveRight, MoveUp,
-    NextItem, OpenFocused, OpenFolder, Quit, ResetZoom, ToggleFlat, ToggleSaved, ToggleSearch,
-    ToggleSlideshow, ToggleSortDir,
+    CloseSearch, CloseViewer, ConfirmSearch, CopyPath, CycleSort, DensityLarge, DensityMedium,
+    DensitySmall, FilterAll, FilterImages, FilterVideos, Gallery, GoUp, MoveDown, MoveLeft,
+    MoveRight, MoveUp, NextItem, OpenFocused, OpenFolder, Quit, ResetZoom, RevealInFinder,
+    ToggleFlat, ToggleSaved, ToggleSearch, ToggleSlideshow, ToggleSortDir,
 };
 use crate::prefs::Prefs;
 
@@ -57,6 +57,8 @@ pub fn start(folder: PathBuf, cx: &mut App) {
         KeyBinding::new("v", FilterVideos, Some("Gallery")),
         KeyBinding::new("escape", CloseSearch, Some("Search")),
         KeyBinding::new("enter", ConfirmSearch, Some("Search")),
+        KeyBinding::new("cmd-r", RevealInFinder, Some("Gallery")),
+        KeyBinding::new("cmd-shift-c", CopyPath, Some("Gallery")),
     ]);
     cx.set_menus(vec![
         Menu {
@@ -74,6 +76,9 @@ pub fn start(folder: PathBuf, cx: &mut App) {
                 MenuItem::action("Go Up", GoUp),
                 MenuItem::separator(),
                 MenuItem::action("Save Library", ToggleSaved),
+                MenuItem::separator(),
+                MenuItem::action("Reveal in Finder", RevealInFinder),
+                MenuItem::action("Copy Path", CopyPath),
             ],
         },
         Menu {
