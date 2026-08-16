@@ -17,6 +17,7 @@ impl Render for Gallery {
         let slideshow = self.slideshow;
         let flat = self.prefs.flat_mode;
         let saved = self.prefs.is_saved(&self.root);
+        let first_run = !self.prefs.seen_open;
         let crumbs = self.breadcrumb_parts();
         let can_go_up = self.can_go_up();
         let folder_full: SharedString = self.folder.display().to_string().into();
@@ -98,7 +99,16 @@ impl Render for Gallery {
                                 true,
                                 cx,
                                 |this, _, _, cx| this.pick_folder(cx),
-                            )),
+                            ))
+                            .when(first_run, |s| {
+                                s.child(
+                                    div()
+                                        .px_1()
+                                        .text_xs()
+                                        .text_color(rgb(t.text_faint))
+                                        .child("or ⌘O"),
+                                )
+                            }),
                     )
                     .child(
                         div()
@@ -374,8 +384,16 @@ impl Render for Gallery {
                                         .gap_3()
                                         .child(
                                             div()
+                                                .text_lg()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(rgb(t.text))
+                                                .child("Open a folder to start"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_sm()
                                                 .text_color(rgb(t.text_dim))
-                                                .child("Nothing here yet."),
+                                                .child("Photos and videos in that folder show up here."),
                                         )
                                         .child(btn(
                                             "open-empty",
@@ -384,7 +402,13 @@ impl Render for Gallery {
                                             true,
                                             cx,
                                             |this, _, _, cx| this.pick_folder(cx),
-                                        )),
+                                        ))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(t.text_faint))
+                                                .child("Save a library to pin it. Recents remembers where you were."),
+                                        ),
                                 )
                             })
                             .when(!loading && count > 0, |s| {

@@ -84,6 +84,9 @@ impl Gallery {
             slideshow_gen: 0,
             focus_handle,
         };
+        if std::env::args().nth(1).is_some() {
+            gallery.prefs.mark_opened();
+        }
         gallery.open_library(folder, true, cx);
         gallery
     }
@@ -369,6 +372,7 @@ impl Gallery {
                 return;
             };
             this.update(cx, |this, cx| {
+                this.prefs.mark_opened();
                 this.open_library(folder, true, cx);
             })
             .ok();
