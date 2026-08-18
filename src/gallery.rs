@@ -11,23 +11,26 @@ use gpui::{
 };
 
 use crate::media::{
-    create_folder, load_or_make_thumb, rename_path, scan_browse, scan_folder_recursive, Entry,
-    MediaKind,
+    create_folder, load_or_make_thumb, scan_browse, scan_folder_recursive, Entry, MediaKind,
 };
 use crate::prefs::Prefs;
 use crate::ui::SIDEBAR_W;
 
+mod collision;
 mod context;
 mod density;
 mod grid;
 mod lightbox;
 mod name;
+mod ops;
 mod search;
 mod sort;
+mod toast;
 mod view;
 mod viewer;
 
 use density::Density;
+use ops::{Clip, CollisionAsk, Toast};
 use sort::{sort_entries, SortKey};
 use viewer::ViewerState;
 
@@ -73,6 +76,14 @@ actions!(
         RenameFocused,
         CloseName,
         ConfirmName,
+        MoveToTrash,
+        Duplicate,
+        CutSelection,
+        CopySelection,
+        PasteSelection,
+        MoveTo,
+        CopyTo,
+        Undo,
     ]
 );
 
@@ -123,6 +134,10 @@ pub struct Gallery {
     context: Option<TileMenu>,
     reload_focus: Option<PathBuf>,
     reload_open: bool,
+    clip: Option<Clip>,
+    toast: Option<Toast>,
+    toast_gen: u64,
+    collision: Option<CollisionAsk>,
     _bounds: Option<Subscription>,
 }
 
@@ -168,6 +183,10 @@ impl Gallery {
             context: None,
             reload_focus: None,
             reload_open: false,
+            clip: None,
+            toast: None,
+            toast_gen: 0,
+            collision: None,
             _bounds: None,
         };
         gallery._bounds = Some(cx.observe_window_bounds(window, |this, window, _cx| {
@@ -202,6 +221,9 @@ impl Gallery {
     fn begin_load(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
         self.reload_focus = None;
         self.reload_open = false;
+        if matches!(self.clip, Some(Clip::Cut(_))) {
+            self.clip = None;
+        }
         self.load_folder(folder, cx);
     }
 
@@ -401,6 +423,15 @@ impl Gallery {
 
     fn close_viewer(&mut self, _: &CloseViewer, _: &mut Window, cx: &mut Context<Self>) {
         if self.context.take().is_some() {
+            cx.notify();
+            return;
+        }
+        if self.collision.is_some() {
+            self.cancel_collision(cx);
+            return;
+        }
+        if matches!(self.clip, Some(Clip::Cut(_))) {
+            self.clip = None;
             cx.notify();
             return;
         }
@@ -899,6 +930,9 @@ impl Gallery {
         if !self.checked.is_empty() {
             parts.push(format!("{} selected", self.checked.len()));
         }
+        if let Some(Clip::Cut(paths)) = &self.clip {
+            parts.push(format!("{} cut", paths.len()));
+        }
         if let Some((done, total)) = self.thumb_progress() {
             if done < total {
                 parts.push(format!("thumbs {done}/{total}"));
@@ -997,7 +1031,9 @@ impl Gallery {
                     return;
                 };
                 let open = self.selected == Some(index);
-                rename_path(&from, &name, &self.root).map(|path| (self.folder.clone(), path, open))
+                self.close_name(&CloseName, window, cx);
+                self.begin_rename_with_collision(from, name, open, cx);
+                return;
             }
         };
         match result {

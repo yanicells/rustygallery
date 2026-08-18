@@ -42,6 +42,7 @@ impl Render for Gallery {
         let sort = self.sort;
         let sort_desc = self.sort_desc;
         let search_open = self.search_open;
+        let can_trash = !self.action_paths().is_empty();
 
         let recents = self.prefs.recents.clone();
         let saved_list = self.prefs.saved.clone();
@@ -79,6 +80,14 @@ impl Render for Gallery {
             .on_action(cx.listener(Self::copy_path))
             .on_action(cx.listener(Self::new_folder))
             .on_action(cx.listener(Self::rename_focused))
+            .on_action(cx.listener(Self::move_to_trash))
+            .on_action(cx.listener(Self::duplicate_selected))
+            .on_action(cx.listener(Self::cut_selected))
+            .on_action(cx.listener(Self::copy_selected))
+            .on_action(cx.listener(Self::paste_clipboard))
+            .on_action(cx.listener(Self::move_to))
+            .on_action(cx.listener(Self::copy_to))
+            .on_action(cx.listener(Self::undo_last))
             .size_full()
             .flex()
             .flex_row()
@@ -447,7 +456,26 @@ impl Render for Gallery {
                                                         cx,
                                                     );
                                                 },
-                                            )),
+                                            ))
+                                            .child(if can_trash {
+                                                btn(
+                                                    "trash",
+                                                    "Trash",
+                                                    false,
+                                                    false,
+                                                    cx,
+                                                    |this, _, window, cx| {
+                                                        this.move_to_trash(
+                                                            &super::MoveToTrash,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    },
+                                                )
+                                                .into_any_element()
+                                            } else {
+                                                btn_disabled("trash", "Trash").into_any_element()
+                                            }),
                                     ),
                             ),
                     )
@@ -556,8 +584,12 @@ impl Render for Gallery {
         })
         .when(search_open, |s| s.child(self.render_search(cx)))
         .when(self.name_kind.is_some(), |s| s.child(self.render_name(cx)))
+        .when(self.collision.is_some(), |s| {
+            s.child(self.render_collision(cx))
+        })
         .when(self.context.is_some(), |s| {
             s.child(self.render_context(window, cx))
         })
+        .when(self.toast.is_some(), |s| s.child(self.render_toast(cx)))
     }
 }

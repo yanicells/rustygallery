@@ -17,6 +17,7 @@ impl Gallery {
     ) -> impl IntoElement {
         let focused = self.focused == Some(index);
         let checked = self.checked.contains(&index);
+        let cut = self.is_cut(entry.path());
         let name = entry.name().clone();
         let t = Theme::DARK;
 
@@ -89,6 +90,7 @@ impl Gallery {
             .flex()
             .flex_col()
             .gap_1()
+            .when(cut, |s| s.opacity(0.45))
             .cursor_pointer()
             .on_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
                 this.click_tile(index, event, cx);

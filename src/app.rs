@@ -6,11 +6,12 @@ use gpui::{
 };
 
 use crate::gallery::{
-    CloseName, CloseSearch, CloseViewer, ConfirmName, ConfirmSearch, CopyPath, CycleSort,
-    DensityLarge, DensityMedium, DensitySmall, FilterAll, FilterImages, FilterVideos, Gallery,
-    GoUp, MoveDown, MoveLeft, MoveRight, MoveUp, NewFolder, NextItem, OpenFocused, OpenFolder,
-    Quit, RenameFocused, ResetZoom, RevealInFinder, ToggleFlat, ToggleSaved, ToggleSearch,
-    ToggleSlideshow, ToggleSortDir,
+    CloseName, CloseSearch, CloseViewer, ConfirmName, ConfirmSearch, CopyPath, CopySelection,
+    CopyTo, CutSelection, CycleSort, DensityLarge, DensityMedium, DensitySmall, Duplicate,
+    FilterAll, FilterImages, FilterVideos, Gallery, GoUp, MoveDown, MoveLeft, MoveRight, MoveTo,
+    MoveToTrash, MoveUp, NewFolder, NextItem, OpenFocused, OpenFolder, PasteSelection, Quit,
+    RenameFocused, ResetZoom, RevealInFinder, ToggleFlat, ToggleSaved, ToggleSearch,
+    ToggleSlideshow, ToggleSortDir, Undo,
 };
 use crate::prefs::Prefs;
 
@@ -50,7 +51,6 @@ pub fn start(folder: PathBuf, cx: &mut App) {
         KeyBinding::new("3", DensityLarge, Some("Gallery")),
         KeyBinding::new("s", ToggleSlideshow, Some("Gallery")),
         KeyBinding::new("f", ToggleFlat, Some("Gallery")),
-        KeyBinding::new("cmd-d", ToggleSaved, Some("Gallery")),
         KeyBinding::new("0", ResetZoom, Some("Gallery")),
         KeyBinding::new("cmd-k", ToggleSearch, Some("Gallery")),
         KeyBinding::new("a", FilterAll, Some("Gallery")),
@@ -64,6 +64,13 @@ pub fn start(folder: PathBuf, cx: &mut App) {
         KeyBinding::new("r", RenameFocused, Some("Gallery")),
         KeyBinding::new("escape", CloseName, Some("NamePrompt")),
         KeyBinding::new("enter", ConfirmName, Some("NamePrompt")),
+        KeyBinding::new("cmd-d", Duplicate, Some("Gallery")),
+        KeyBinding::new("cmd-x", CutSelection, Some("Gallery")),
+        KeyBinding::new("cmd-c", CopySelection, Some("Gallery")),
+        KeyBinding::new("cmd-v", PasteSelection, Some("Gallery")),
+        KeyBinding::new("cmd-z", Undo, Some("Gallery")),
+        KeyBinding::new("cmd-backspace", MoveToTrash, Some("Gallery")),
+        KeyBinding::new("delete", MoveToTrash, Some("Gallery")),
     ]);
     cx.set_menus(vec![
         Menu {
@@ -86,6 +93,21 @@ pub fn start(folder: PathBuf, cx: &mut App) {
                 MenuItem::separator(),
                 MenuItem::action("Reveal in Finder", RevealInFinder),
                 MenuItem::action("Copy Path", CopyPath),
+            ],
+        },
+        Menu {
+            name: "Edit".into(),
+            items: vec![
+                MenuItem::action("Undo", Undo),
+                MenuItem::separator(),
+                MenuItem::action("Cut", CutSelection),
+                MenuItem::action("Copy", CopySelection),
+                MenuItem::action("Paste", PasteSelection),
+                MenuItem::action("Duplicate", Duplicate),
+                MenuItem::separator(),
+                MenuItem::action("Move to…", MoveTo),
+                MenuItem::action("Copy to…", CopyTo),
+                MenuItem::action("Move to Trash", MoveToTrash),
             ],
         },
         Menu {
