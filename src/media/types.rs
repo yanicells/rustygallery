@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use gpui::SharedString;
 
@@ -16,6 +17,8 @@ pub struct MediaItem {
     pub path: PathBuf,
     pub name: SharedString,
     pub kind: MediaKind,
+    pub modified: u64,
+    pub size: u64,
 }
 
 #[derive(Clone)]
@@ -23,6 +26,7 @@ pub struct FolderItem {
     pub path: PathBuf,
     pub name: SharedString,
     pub media_count: usize,
+    pub modified: u64,
 }
 
 #[derive(Clone)]
@@ -38,6 +42,41 @@ impl Entry {
             Self::Media(m) => &m.name,
         }
     }
+
+    pub fn modified(&self) -> u64 {
+        match self {
+            Self::Folder(f) => f.modified,
+            Self::Media(m) => m.modified,
+        }
+    }
+
+    pub fn size(&self) -> u64 {
+        match self {
+            Self::Folder(f) => f.media_count as u64,
+            Self::Media(m) => m.size,
+        }
+    }
+
+    pub fn type_key(&self) -> u8 {
+        match self {
+            Self::Folder(_) => 0,
+            Self::Media(m) if m.kind == MediaKind::Image => 1,
+            Self::Media(_) => 2,
+        }
+    }
+}
+
+pub(super) fn file_stats(path: &Path) -> (u64, u64) {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return (0, 0);
+    };
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    (modified, meta.len())
 }
 
 pub(super) fn is_hidden(path: &Path) -> bool {

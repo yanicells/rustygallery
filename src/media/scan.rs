@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::types::{is_hidden, media_kind, Entry, FolderItem, MediaItem};
+use super::types::{file_stats, is_hidden, media_kind, Entry, FolderItem, MediaItem};
 
 /// Current-directory listing: subfolders first, then media in this folder only.
 pub fn scan_browse(dir: &Path) -> Vec<Entry> {
@@ -23,10 +23,12 @@ pub fn scan_browse(dir: &Path) -> Vec<Entry> {
                 .unwrap_or("folder")
                 .to_string();
             let media_count = count_immediate_media(&path);
+            let (modified, _) = file_stats(&path);
             folders.push(FolderItem {
                 path,
                 name: name.into(),
                 media_count,
+                modified,
             });
         } else if path.is_file() {
             if let Some(kind) = media_kind(&path) {
@@ -35,10 +37,13 @@ pub fn scan_browse(dir: &Path) -> Vec<Entry> {
                     .and_then(|n| n.to_str())
                     .unwrap_or("untitled")
                     .to_string();
+                let (modified, size) = file_stats(&path);
                 media.push(MediaItem {
                     path,
                     name: name.into(),
                     kind,
+                    modified,
+                    size,
                 });
             }
         }
@@ -96,10 +101,13 @@ pub fn scan_folder_recursive(root: &Path) -> Vec<Entry> {
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .replace('\\', "/");
+            let (modified, size) = file_stats(&path);
             media.push(MediaItem {
                 path,
                 name: rel.into(),
                 kind,
+                modified,
+                size,
             });
         }
     }

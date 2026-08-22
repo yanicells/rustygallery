@@ -3,7 +3,9 @@ use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
 use crate::media::Entry;
 use crate::ui::{btn, btn_disabled, sidebar_row, Theme, SIDEBAR_W};
 
-use super::{density::Density, Gallery, GoUp, ToggleFlat, ToggleSaved, ToggleSlideshow, GAP, PAD};
+use super::{
+    density::Density, Filter, Gallery, GoUp, ToggleFlat, ToggleSaved, ToggleSlideshow, GAP, PAD,
+};
 
 impl Render for Gallery {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -22,12 +24,18 @@ impl Render for Gallery {
         let can_go_up = self.can_go_up();
         let folder_full: SharedString = self.folder.display().to_string().into();
 
-        let folders = self
+        let visible: Vec<(usize, &Entry)> = self
             .entries
             .iter()
-            .filter(|e| matches!(e, Entry::Folder(_)))
+            .enumerate()
+            .filter(|(_, e)| self.entry_visible(e))
+            .collect();
+        let visible_count = visible.len();
+        let folders = visible
+            .iter()
+            .filter(|(_, e)| matches!(e, Entry::Folder(_)))
             .count();
-        let media = count.saturating_sub(folders);
+        let media = visible_count.saturating_sub(folders);
         let status: SharedString = if loading {
             "Loading…".into()
         } else if flat {
@@ -35,6 +43,10 @@ impl Render for Gallery {
         } else {
             format!("{folders} folders · {media} media").into()
         };
+        let filter = self.filter;
+        let sort = self.sort;
+        let sort_desc = self.sort_desc;
+        let search_open = self.search_open;
 
         let recents = self.prefs.recents.clone();
         let saved_list = self.prefs.saved.clone();
@@ -62,6 +74,12 @@ impl Render for Gallery {
             .on_action(cx.listener(Self::toggle_flat))
             .on_action(cx.listener(Self::toggle_saved))
             .on_action(cx.listener(Self::reset_zoom))
+            .on_action(cx.listener(Self::cycle_sort))
+            .on_action(cx.listener(Self::toggle_sort_dir))
+            .on_action(cx.listener(Self::filter_all))
+            .on_action(cx.listener(Self::filter_images))
+            .on_action(cx.listener(Self::filter_videos))
+            .on_action(cx.listener(Self::toggle_search))
             .size_full()
             .flex()
             .flex_row()
@@ -340,6 +358,83 @@ impl Render for Gallery {
                                                         },
                                                     )),
                                             )
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .gap_1()
+                                                    .child(btn(
+                                                        "f-all",
+                                                        "All",
+                                                        filter == Filter::All,
+                                                        false,
+                                                        cx,
+                                                        |this, _, _, cx| {
+                                                            this.set_filter(Filter::All, cx)
+                                                        },
+                                                    ))
+                                                    .child(btn(
+                                                        "f-img",
+                                                        "Images",
+                                                        filter == Filter::Images,
+                                                        false,
+                                                        cx,
+                                                        |this, _, _, cx| {
+                                                            this.set_filter(Filter::Images, cx)
+                                                        },
+                                                    ))
+                                                    .child(btn(
+                                                        "f-vid",
+                                                        "Videos",
+                                                        filter == Filter::Videos,
+                                                        false,
+                                                        cx,
+                                                        |this, _, _, cx| {
+                                                            this.set_filter(Filter::Videos, cx)
+                                                        },
+                                                    )),
+                                            )
+                                            .child(btn(
+                                                "sort",
+                                                format!(
+                                                    "{} {}",
+                                                    sort.label(),
+                                                    if sort_desc { "↓" } else { "↑" }
+                                                ),
+                                                false,
+                                                false,
+                                                cx,
+                                                |this, _, window, cx| {
+                                                    this.cycle_sort(&super::CycleSort, window, cx);
+                                                },
+                                            ))
+                                            .child(btn(
+                                                "sort-dir",
+                                                if sort_desc { "Desc" } else { "Asc" },
+                                                sort_desc,
+                                                false,
+                                                cx,
+                                                |this, _, window, cx| {
+                                                    this.toggle_sort_dir(
+                                                        &super::ToggleSortDir,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                },
+                                            ))
+                                            .child(btn(
+                                                "search",
+                                                "Search",
+                                                search_open,
+                                                false,
+                                                cx,
+                                                |this, _, window, cx| {
+                                                    this.toggle_search(
+                                                        &super::ToggleSearch,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                },
+                                            ))
                                             .child(btn(
                                                 "slideshow",
                                                 if slideshow { "Stop" } else { "Slideshow" },
@@ -411,7 +506,14 @@ impl Render for Gallery {
                                         ),
                                 )
                             })
-                            .when(!loading && count > 0, |s| {
+                            .when(!loading && count > 0 && visible_count == 0, |s| {
+                                s.flex().items_center().justify_center().child(
+                                    div()
+                                        .text_color(rgb(t.text_dim))
+                                        .child("Nothing matches this filter."),
+                                )
+                            })
+                            .when(!loading && visible_count > 0, |s| {
                                 s.child(
                                     div()
                                         .w_full()
@@ -419,9 +521,9 @@ impl Render for Gallery {
                                         .flex_row()
                                         .flex_wrap()
                                         .gap(px(GAP))
-                                        .children(self.entries.iter().enumerate().map(
-                                            |(i, entry)| self.render_tile(i, entry, tile, cx),
-                                        )),
+                                        .children(visible.into_iter().map(|(i, entry)| {
+                                            self.render_tile(i, entry, tile, cx)
+                                        })),
                                 )
                             }),
                     ),
@@ -430,5 +532,6 @@ impl Render for Gallery {
         root.when_some(selected, |s, index| {
             s.child(self.render_lightbox(index, cx))
         })
+        .when(search_open, |s| s.child(self.render_search(cx)))
     }
 }

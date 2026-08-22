@@ -6,9 +6,10 @@ use gpui::{
 };
 
 use crate::gallery::{
-    CloseViewer, DensityLarge, DensityMedium, DensitySmall, Gallery, GoUp, MoveDown, MoveLeft,
-    MoveRight, MoveUp, NextItem, OpenFocused, OpenFolder, Quit, ResetZoom, ToggleFlat, ToggleSaved,
-    ToggleSlideshow,
+    CloseSearch, CloseViewer, ConfirmSearch, CycleSort, DensityLarge, DensityMedium, DensitySmall,
+    FilterAll, FilterImages, FilterVideos, Gallery, GoUp, MoveDown, MoveLeft, MoveRight, MoveUp,
+    NextItem, OpenFocused, OpenFolder, Quit, ResetZoom, ToggleFlat, ToggleSaved, ToggleSearch,
+    ToggleSlideshow, ToggleSortDir,
 };
 use crate::prefs::Prefs;
 
@@ -50,6 +51,12 @@ pub fn start(folder: PathBuf, cx: &mut App) {
         KeyBinding::new("f", ToggleFlat, Some("Gallery")),
         KeyBinding::new("cmd-d", ToggleSaved, Some("Gallery")),
         KeyBinding::new("0", ResetZoom, Some("Gallery")),
+        KeyBinding::new("cmd-k", ToggleSearch, Some("Gallery")),
+        KeyBinding::new("a", FilterAll, Some("Gallery")),
+        KeyBinding::new("i", FilterImages, Some("Gallery")),
+        KeyBinding::new("v", FilterVideos, Some("Gallery")),
+        KeyBinding::new("escape", CloseSearch, Some("Search")),
+        KeyBinding::new("enter", ConfirmSearch, Some("Search")),
     ]);
     cx.set_menus(vec![
         Menu {
@@ -77,6 +84,14 @@ pub fn start(folder: PathBuf, cx: &mut App) {
                 MenuItem::action("Density Small", DensitySmall),
                 MenuItem::action("Density Medium", DensityMedium),
                 MenuItem::action("Density Large", DensityLarge),
+                MenuItem::separator(),
+                MenuItem::action("All", FilterAll),
+                MenuItem::action("Images", FilterImages),
+                MenuItem::action("Videos", FilterVideos),
+                MenuItem::separator(),
+                MenuItem::action("Cycle Sort", CycleSort),
+                MenuItem::action("Sort Direction", ToggleSortDir),
+                MenuItem::action("Search…", ToggleSearch),
             ],
         },
         Menu {
