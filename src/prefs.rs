@@ -8,6 +8,7 @@ pub struct Prefs {
     pub recents: Vec<PathBuf>,
     pub saved: Vec<PathBuf>,
     pub flat_mode: bool,
+    pub seen_open: bool,
 }
 
 impl Prefs {
@@ -36,11 +37,15 @@ impl Prefs {
                 "[saved]" => prefs.saved.push(PathBuf::from(line)),
                 "[flags]" if line == "flat=1" => prefs.flat_mode = true,
                 "[flags]" if line == "flat=0" => prefs.flat_mode = false,
+                "[flags]" if line == "seen_open=1" => prefs.seen_open = true,
                 _ => {}
             }
         }
         prefs.recents.retain(|p| p.is_dir());
         prefs.saved.retain(|p| p.is_dir());
+        if !prefs.recents.is_empty() {
+            prefs.seen_open = true;
+        }
         prefs
     }
 
@@ -56,6 +61,9 @@ impl Prefs {
         } else {
             "flat=0\n"
         });
+        if self.seen_open {
+            out.push_str("seen_open=1\n");
+        }
         out.push_str("\n[recents]\n");
         for p in self.recents.iter().take(12) {
             out.push_str(&p.to_string_lossy());
@@ -79,6 +87,14 @@ impl Prefs {
 
     pub fn is_saved(&self, folder: &Path) -> bool {
         self.saved.iter().any(|p| p == folder)
+    }
+
+    pub fn mark_opened(&mut self) {
+        if self.seen_open {
+            return;
+        }
+        self.seen_open = true;
+        self.save();
     }
 
     pub fn toggle_saved(&mut self, folder: &Path) {

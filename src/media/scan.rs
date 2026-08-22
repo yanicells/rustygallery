@@ -22,9 +22,11 @@ pub fn scan_browse(dir: &Path) -> Vec<Entry> {
                 .and_then(|n| n.to_str())
                 .unwrap_or("folder")
                 .to_string();
+            let media_count = count_immediate_media(&path);
             folders.push(FolderItem {
                 path,
                 name: name.into(),
+                media_count,
             });
         } else if path.is_file() {
             if let Some(kind) = media_kind(&path) {
@@ -50,6 +52,19 @@ pub fn scan_browse(dir: &Path) -> Vec<Entry> {
         .map(Entry::Folder)
         .chain(media.into_iter().map(Entry::Media))
         .collect()
+}
+
+fn count_immediate_media(dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter(|entry| {
+            let path = entry.path();
+            path.is_file() && media_kind(&path).is_some()
+        })
+        .count()
 }
 
 /// Flattened recursive media-only listing (no folder tiles).
@@ -91,4 +106,43 @@ pub fn scan_folder_recursive(root: &Path) -> Vec<Entry> {
 
     media.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     media.into_iter().map(Entry::Media).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_tree() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "rusty-scan-count-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(dir.join("empty")).unwrap();
+        fs::create_dir_all(dir.join("pics")).unwrap();
+        fs::write(dir.join("pics/a.jpg"), []).unwrap();
+        fs::write(dir.join("pics/b.png"), []).unwrap();
+        fs::write(dir.join("pics/notes.txt"), []).unwrap();
+        dir
+    }
+
+    #[test]
+    fn folder_tiles_count_immediate_media_only() {
+        let dir = temp_tree();
+        let entries = scan_browse(&dir);
+        let counts: Vec<(String, usize)> = entries
+            .into_iter()
+            .filter_map(|e| match e {
+                Entry::Folder(f) => Some((f.name.to_string(), f.media_count)),
+                Entry::Media(_) => None,
+            })
+            .collect();
+        assert!(counts.contains(&("empty".into(), 0)));
+        assert!(counts.contains(&("pics".into(), 2)));
+        let _ = fs::remove_dir_all(dir);
+    }
 }

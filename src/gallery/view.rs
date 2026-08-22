@@ -1,12 +1,14 @@
 use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
 
 use crate::media::Entry;
-use crate::ui::{btn, sidebar_row, Theme, SIDEBAR_W};
+use crate::ui::{btn, btn_disabled, sidebar_row, Theme, SIDEBAR_W};
 
 use super::{density::Density, Gallery, GoUp, ToggleFlat, ToggleSaved, ToggleSlideshow, GAP, PAD};
 
 impl Render for Gallery {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        window.set_window_title(&format!("gallery — {}", self.folder.display()));
+
         let (_, tile) = self.layout(window);
         let count = self.entries.len();
         let selected = self.selected;
@@ -15,7 +17,9 @@ impl Render for Gallery {
         let slideshow = self.slideshow;
         let flat = self.prefs.flat_mode;
         let saved = self.prefs.is_saved(&self.root);
-        let crumb = self.breadcrumb();
+        let first_run = !self.prefs.seen_open;
+        let crumbs = self.breadcrumb_parts();
+        let can_go_up = self.can_go_up();
         let folder_full: SharedString = self.folder.display().to_string().into();
 
         let folders = self
@@ -95,7 +99,16 @@ impl Render for Gallery {
                                 true,
                                 cx,
                                 |this, _, _, cx| this.pick_folder(cx),
-                            )),
+                            ))
+                            .when(first_run, |s| {
+                                s.child(
+                                    div()
+                                        .px_1()
+                                        .text_xs()
+                                        .text_color(rgb(t.text_faint))
+                                        .child("or ⌘O"),
+                                )
+                            }),
                     )
                     .child(
                         div()
@@ -200,16 +213,21 @@ impl Render for Gallery {
                                             .gap_2()
                                             .min_w_0()
                                             .flex_1()
-                                            .child(btn(
-                                                "back",
-                                                "← Back",
-                                                false,
-                                                false,
-                                                cx,
-                                                |this, _, window, cx| {
-                                                    this.go_up(&GoUp, window, cx);
-                                                },
-                                            ))
+                                            .child(if can_go_up {
+                                                btn(
+                                                    "back",
+                                                    "← Back",
+                                                    false,
+                                                    false,
+                                                    cx,
+                                                    |this, _, window, cx| {
+                                                        this.go_up(&GoUp, window, cx);
+                                                    },
+                                                )
+                                                .into_any_element()
+                                            } else {
+                                                btn_disabled("back", "← Back").into_any_element()
+                                            })
                                             .child(
                                                 div()
                                                     .flex()
@@ -217,11 +235,40 @@ impl Render for Gallery {
                                                     .min_w_0()
                                                     .child(
                                                         div()
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_1()
                                                             .text_sm()
-                                                            .font_weight(gpui::FontWeight::MEDIUM)
                                                             .overflow_hidden()
-                                                            .whitespace_nowrap()
-                                                            .child(crumb),
+                                                            .children(crumbs.into_iter().enumerate().flat_map(|(i, (label, path))| {
+                                                                let t = Theme::DARK;
+                                                                let mut bits = Vec::new();
+                                                                if i > 0 {
+                                                                    bits.push(
+                                                                        div()
+                                                                            .text_color(rgb(t.text_faint))
+                                                                            .child("/")
+                                                                            .into_any_element(),
+                                                                    );
+                                                                }
+                                                                bits.push(match path {
+                                                                    Some(path) => div()
+                                                                        .id(("crumb", i))
+                                                                        .cursor_pointer()
+                                                                        .text_color(rgb(t.text_dim))
+                                                                        .hover(|s| s.text_color(rgb(t.text)))
+                                                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                                                            this.open_crumb(path.clone(), cx);
+                                                                        }))
+                                                                        .child(label)
+                                                                        .into_any_element(),
+                                                                    None => div()
+                                                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                                                        .child(label)
+                                                                        .into_any_element(),
+                                                                });
+                                                                bits
+                                                            })),
                                                     )
                                                     .child(
                                                         div()
@@ -337,8 +384,16 @@ impl Render for Gallery {
                                         .gap_3()
                                         .child(
                                             div()
+                                                .text_lg()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(rgb(t.text))
+                                                .child("Open a folder to start"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_sm()
                                                 .text_color(rgb(t.text_dim))
-                                                .child("Nothing here yet."),
+                                                .child("Photos and videos in that folder show up here."),
                                         )
                                         .child(btn(
                                             "open-empty",
@@ -347,7 +402,13 @@ impl Render for Gallery {
                                             true,
                                             cx,
                                             |this, _, _, cx| this.pick_folder(cx),
-                                        )),
+                                        ))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(t.text_faint))
+                                                .child("Save a library to pin it. Recents remembers where you were."),
+                                        ),
                                 )
                             })
                             .when(!loading && count > 0, |s| {

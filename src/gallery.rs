@@ -84,6 +84,9 @@ impl Gallery {
             slideshow_gen: 0,
             focus_handle,
         };
+        if std::env::args().nth(1).is_some() {
+            gallery.prefs.mark_opened();
+        }
         gallery.open_library(folder, true, cx);
         gallery
     }
@@ -369,6 +372,7 @@ impl Gallery {
                 return;
             };
             this.update(cx, |this, cx| {
+                this.prefs.mark_opened();
                 this.open_library(folder, true, cx);
             })
             .ok();
@@ -452,30 +456,41 @@ impl Gallery {
         }
     }
 
-    fn breadcrumb(&self) -> SharedString {
-        let rel = self
-            .folder
-            .strip_prefix(&self.root)
-            .ok()
-            .map(|p| p.to_string_lossy().replace('\\', "/"))
-            .filter(|s| !s.is_empty());
-        match rel {
-            Some(rel) => format!(
-                "{} / {}",
-                self.root
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("library"),
-                rel
-            )
-            .into(),
-            None => self
-                .root
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("library")
-                .to_string()
-                .into(),
+    fn breadcrumb_parts(&self) -> Vec<(SharedString, Option<PathBuf>)> {
+        let root_label: SharedString = self
+            .root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("library")
+            .to_string()
+            .into();
+        let mut parts = vec![(
+            root_label,
+            if self.folder == self.root {
+                None
+            } else {
+                Some(self.root.clone())
+            },
+        )];
+        let Ok(rel) = self.folder.strip_prefix(&self.root) else {
+            return parts;
+        };
+        let mut acc = self.root.clone();
+        for comp in rel.components() {
+            acc.push(comp);
+            let label: SharedString = comp.as_os_str().to_string_lossy().into_owned().into();
+            let current = acc == self.folder;
+            parts.push((label, if current { None } else { Some(acc.clone()) }));
+        }
+        parts
+    }
+
+    fn open_crumb(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if path == self.folder {
+            return;
+        }
+        if path == self.root || path.starts_with(&self.root) {
+            self.begin_load(path, cx);
         }
     }
 }

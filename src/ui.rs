@@ -2,7 +2,7 @@ mod button;
 mod sidebar;
 mod theme;
 
-pub use button::btn;
+pub use button::{btn, btn_disabled};
 pub use sidebar::sidebar_row;
 pub use theme::Theme;
 

@@ -22,6 +22,7 @@ pub struct MediaItem {
 pub struct FolderItem {
     pub path: PathBuf,
     pub name: SharedString,
+    pub media_count: usize,
 }
 
 #[derive(Clone)]

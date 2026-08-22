@@ -18,8 +18,9 @@ impl Gallery {
         let t = Theme::DARK;
 
         let media = match entry {
-            Entry::Folder(_) => div()
+            Entry::Folder(folder) => div()
                 .size_full()
+                .relative()
                 .flex()
                 .flex_col()
                 .items_center()
@@ -33,6 +34,18 @@ impl Gallery {
                         .text_xs()
                         .text_color(rgb(t.text_muted))
                         .child("folder"),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_1()
+                        .right_1()
+                        .px_1p5()
+                        .rounded_md()
+                        .bg(rgb(t.btn_active))
+                        .text_color(rgb(t.on_accent))
+                        .text_xs()
+                        .child(format!("{}", folder.media_count)),
                 )
                 .into_any_element(),
             Entry::Media(item) if item.kind == MediaKind::Video => div()
