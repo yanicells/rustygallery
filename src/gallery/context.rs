@@ -3,7 +3,10 @@ use gpui::{div, prelude::*, px, rgb, Context, MouseButton, Window};
 use crate::media::Entry;
 use crate::ui::Theme;
 
-use super::{CopyPath, Gallery, RevealInFinder};
+use super::{
+    CopyPath, CopySelection, CopyTo, CutSelection, Duplicate, Gallery, MoveTo, MoveToTrash,
+    RevealInFinder,
+};
 
 impl Gallery {
     pub(super) fn render_context(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
@@ -13,9 +16,10 @@ impl Gallery {
         let t = Theme::DARK;
         let index = menu.index;
         let folder = matches!(self.entries.get(index), Some(Entry::Folder(_)));
+        let can_dup = matches!(self.entries.get(index), Some(Entry::Media(_)));
         let can_new = folder && !self.prefs.flat_mode;
         let item_h = 28.0;
-        let rows = 4.0 + if can_new { 1.0 } else { 0.0 };
+        let rows = 10.0 + if can_new { 1.0 } else { 0.0 } + if can_dup { 1.0 } else { 0.0 };
         let mw = 196.0;
         let mh = 8.0 + rows * item_h;
         let vw: f32 = window.viewport_size().width.into();
@@ -57,6 +61,28 @@ impl Gallery {
                     .child(menu_row("Rename", cx, move |this, _, window, cx| {
                         this.context_rename(index, window, cx);
                     }))
+                    .when(can_dup, |s| {
+                        s.child(menu_row("Duplicate", cx, move |this, _, window, cx| {
+                            this.dismiss_context(cx);
+                            this.duplicate_selected(&Duplicate, window, cx);
+                        }))
+                    })
+                    .child(menu_row("Cut", cx, move |this, _, window, cx| {
+                        this.dismiss_context(cx);
+                        this.cut_selected(&CutSelection, window, cx);
+                    }))
+                    .child(menu_row("Copy", cx, move |this, _, window, cx| {
+                        this.dismiss_context(cx);
+                        this.copy_selected(&CopySelection, window, cx);
+                    }))
+                    .child(menu_row("Move to…", cx, move |this, _, window, cx| {
+                        this.dismiss_context(cx);
+                        this.move_to(&MoveTo, window, cx);
+                    }))
+                    .child(menu_row("Copy to…", cx, move |this, _, window, cx| {
+                        this.dismiss_context(cx);
+                        this.copy_to(&CopyTo, window, cx);
+                    }))
                     .when(can_new, |s| {
                         s.child(menu_row(
                             "New Folder inside",
@@ -66,6 +92,10 @@ impl Gallery {
                             },
                         ))
                     })
+                    .child(menu_row("Move to Trash", cx, move |this, _, window, cx| {
+                        this.dismiss_context(cx);
+                        this.move_to_trash(&MoveToTrash, window, cx);
+                    }))
                     .child(menu_row(
                         "Reveal in Finder",
                         cx,

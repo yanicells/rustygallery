@@ -3,7 +3,7 @@ use gpui::{div, img, prelude::*, relative, rgb, Context, MouseButton, ObjectFit}
 use crate::media::Entry;
 use crate::ui::{btn, Theme};
 
-use super::{viewer::ViewerState, CopyPath, Gallery, RevealInFinder, ToggleSlideshow};
+use super::{viewer::ViewerState, CopyPath, Gallery, MoveToTrash, RevealInFinder, ToggleSlideshow};
 
 impl Gallery {
     pub(super) fn render_lightbox(&self, index: usize, cx: &Context<Self>) -> impl IntoElement {
@@ -91,6 +91,16 @@ impl Gallery {
                                 },
                             ))
                             .child(btn(
+                                "trash-btn",
+                                "Trash",
+                                false,
+                                false,
+                                cx,
+                                |this, _, window, cx| {
+                                    this.move_to_trash(&MoveToTrash, window, cx);
+                                },
+                            ))
+                            .child(btn(
                                 "slide-btn",
                                 if slideshow { "Stop" } else { "Slideshow" },
                                 slideshow,
@@ -147,9 +157,7 @@ impl Gallery {
                     .py_2()
                     .text_xs()
                     .text_color(rgb(t.text_dim))
-                    .child(
-                    "R rename · Scroll zoom · drag pan · double-click reset · ← → · S slideshow",
-                ),
+                    .child("R rename · Delete trash · Scroll zoom · drag pan · ← → · S slideshow"),
             )
             .into_any_element()
     }
