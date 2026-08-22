@@ -64,6 +64,13 @@ impl Entry {
             Self::Media(_) => 2,
         }
     }
+
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::Folder(f) => &f.path,
+            Self::Media(m) => &m.path,
+        }
+    }
 }
 
 pub(super) fn file_stats(path: &Path) -> (u64, u64) {

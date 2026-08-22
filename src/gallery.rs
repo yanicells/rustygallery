@@ -1,4 +1,9 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeSet, HashMap},
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 
 use gpui::{
     actions, prelude::*, Context, FocusHandle, Image, PathPromptOptions, SharedString,
@@ -57,6 +62,8 @@ actions!(
         ToggleSearch,
         CloseSearch,
         ConfirmSearch,
+        RevealInFinder,
+        CopyPath,
     ]
 );
 
@@ -74,6 +81,8 @@ pub struct Gallery {
     thumb_gen: u64,
     density: Density,
     focused: Option<usize>,
+    checked: BTreeSet<usize>,
+    anchor: Option<usize>,
     selected: Option<usize>,
     viewer: ViewerState,
     slideshow: bool,
@@ -109,6 +118,8 @@ impl Gallery {
             thumb_gen: 0,
             density,
             focused: None,
+            checked: BTreeSet::new(),
+            anchor: None,
             selected: None,
             viewer: ViewerState::default(),
             slideshow: false,
@@ -157,6 +168,8 @@ impl Gallery {
         self.entries.clear();
         self.thumbs.clear();
         self.focused = None;
+        self.checked.clear();
+        self.anchor = None;
         self.selected = None;
         self.viewer = ViewerState::default();
         self.stop_slideshow();
@@ -283,6 +296,9 @@ impl Gallery {
             return;
         };
         self.focused = Some(index);
+        self.checked.clear();
+        self.checked.insert(index);
+        self.anchor = Some(index);
         match entry {
             Entry::Folder(folder) => {
                 self.selected = None;
@@ -561,6 +577,12 @@ impl Gallery {
                 self.stop_slideshow();
             }
         }
+        self.checked.retain(|i| vis.contains(i));
+        if let Some(a) = self.anchor {
+            if !vis.contains(&a) {
+                self.anchor = self.focused;
+            }
+        }
         cx.notify();
     }
 
@@ -676,6 +698,142 @@ impl Gallery {
         let _ = window;
     }
 
+    fn click_tile(&mut self, index: usize, event: &gpui::ClickEvent, cx: &mut Context<Self>) {
+        let mods = event.modifiers();
+        if mods.secondary() {
+            self.toggle_checked(index, cx);
+            return;
+        }
+        if mods.shift {
+            self.range_check(index, cx);
+            return;
+        }
+        self.open_entry(index, cx);
+    }
+
+    fn toggle_checked(&mut self, index: usize, cx: &mut Context<Self>) {
+        if !self.checked.remove(&index) {
+            self.checked.insert(index);
+        }
+        self.focused = Some(index);
+        self.anchor = Some(index);
+        cx.notify();
+    }
+
+    fn range_check(&mut self, index: usize, cx: &mut Context<Self>) {
+        let vis = self.visible_indices();
+        if vis.is_empty() {
+            return;
+        }
+        let start = self.anchor.or(self.focused).unwrap_or(index);
+        self.checked.clear();
+        for i in range_select(&vis, start, index) {
+            self.checked.insert(i);
+        }
+        self.focused = Some(index);
+        cx.notify();
+    }
+
+    fn action_paths(&self) -> Vec<PathBuf> {
+        let idxs = if !self.checked.is_empty() {
+            self.checked.iter().copied().collect()
+        } else if let Some(i) = self.selected.or(self.focused) {
+            vec![i]
+        } else {
+            Vec::new()
+        };
+        idxs.into_iter()
+            .filter_map(|i| self.entries.get(i).map(|e| e.path().to_path_buf()))
+            .collect()
+    }
+
+    fn reveal_target(&self) -> PathBuf {
+        if !self.checked.is_empty() {
+            if let Some(f) = self.focused {
+                if self.checked.contains(&f) {
+                    if let Some(path) = self.entries.get(f).map(|e| e.path().to_path_buf()) {
+                        return path;
+                    }
+                }
+            }
+            if let Some(path) = self
+                .checked
+                .iter()
+                .find_map(|&i| self.entries.get(i).map(|e| e.path().to_path_buf()))
+            {
+                return path;
+            }
+        }
+        if let Some(i) = self.selected.or(self.focused) {
+            if let Some(path) = self.entries.get(i).map(|e| e.path().to_path_buf()) {
+                return path;
+            }
+        }
+        self.folder.clone()
+    }
+
+    fn reveal_in_finder(&mut self, _: &RevealInFinder, _: &mut Window, cx: &mut Context<Self>) {
+        cx.reveal_path(&self.reveal_target());
+    }
+
+    fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut Context<Self>) {
+        let paths = self.action_paths();
+        if paths.is_empty() {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                self.folder.display().to_string(),
+            ));
+            return;
+        }
+        let text = paths
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+    }
+
+    fn thumb_progress(&self) -> Option<(usize, usize)> {
+        let total = self
+            .entries
+            .iter()
+            .filter(|e| matches!(e, Entry::Media(m) if m.kind == MediaKind::Image))
+            .count();
+        if total == 0 {
+            return None;
+        }
+        Some((self.thumbs.len().min(total), total))
+    }
+
+    fn status_left(&self, folders: usize, media: usize) -> SharedString {
+        if self.loading {
+            return "Loading…".into();
+        }
+        let mut parts = Vec::new();
+        if self.prefs.flat_mode {
+            parts.push(format!("{media} media"));
+        } else {
+            parts.push(format!("{folders} folders · {media} media"));
+        }
+        if !self.checked.is_empty() {
+            parts.push(format!("{} selected", self.checked.len()));
+        }
+        if let Some((done, total)) = self.thumb_progress() {
+            if done < total {
+                parts.push(format!("thumbs {done}/{total}"));
+            }
+        }
+        parts.join(" · ").into()
+    }
+
+    fn status_path(&self) -> SharedString {
+        if let Some(i) = self.focused {
+            if let Some(entry) = self.entries.get(i) {
+                return entry.path().display().to_string().into();
+            }
+        }
+        self.folder.display().to_string().into()
+    }
+
     fn breadcrumb_parts(&self) -> Vec<(SharedString, Option<PathBuf>)> {
         let root_label: SharedString = self
             .root
@@ -712,5 +870,25 @@ impl Gallery {
         if path == self.root || path.starts_with(&self.root) {
             self.begin_load(path, cx);
         }
+    }
+}
+
+fn range_select(visible: &[usize], anchor: usize, to: usize) -> Vec<usize> {
+    let a = visible.iter().position(|&i| i == anchor).unwrap_or(0);
+    let b = visible.iter().position(|&i| i == to).unwrap_or(0);
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    visible[lo..=hi].to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::range_select;
+
+    #[test]
+    fn shift_range_follows_visible_order() {
+        let vis = [0, 2, 5, 8];
+        assert_eq!(range_select(&vis, 2, 8), vec![2, 5, 8]);
+        assert_eq!(range_select(&vis, 8, 0), vec![0, 2, 5, 8]);
+        assert_eq!(range_select(&vis, 5, 5), vec![5]);
     }
 }

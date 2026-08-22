@@ -3,7 +3,7 @@ use gpui::{div, img, prelude::*, relative, rgb, Context, MouseButton, ObjectFit}
 use crate::media::Entry;
 use crate::ui::{btn, Theme};
 
-use super::{viewer::ViewerState, Gallery, ToggleSlideshow};
+use super::{viewer::ViewerState, CopyPath, Gallery, RevealInFinder, ToggleSlideshow};
 
 impl Gallery {
     pub(super) fn render_lightbox(&self, index: usize, cx: &Context<Self>) -> impl IntoElement {
@@ -50,6 +50,26 @@ impl Gallery {
                         div()
                             .flex()
                             .gap_2()
+                            .child(btn(
+                                "reveal-btn",
+                                "Reveal",
+                                false,
+                                false,
+                                cx,
+                                |this, _, window, cx| {
+                                    this.reveal_in_finder(&RevealInFinder, window, cx);
+                                },
+                            ))
+                            .child(btn(
+                                "copy-path-btn",
+                                "Copy Path",
+                                false,
+                                false,
+                                cx,
+                                |this, _, window, cx| {
+                                    this.copy_path(&CopyPath, window, cx);
+                                },
+                            ))
                             .child(btn(
                                 "slide-btn",
                                 if slideshow { "Stop" } else { "Slideshow" },
