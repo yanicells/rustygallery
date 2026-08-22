@@ -21,6 +21,7 @@ mod collision;
 mod context;
 mod density;
 mod drag;
+mod exif;
 mod grid;
 mod lightbox;
 mod name;
@@ -87,6 +88,12 @@ actions!(
         MoveTo,
         CopyTo,
         Undo,
+        ToggleFullscreen,
+        RotateLeft,
+        RotateRight,
+        ViewFit,
+        ViewFill,
+        ViewActual,
     ]
 );
 
@@ -425,7 +432,9 @@ impl Gallery {
             Entry::Media(item) => match item.kind {
                 MediaKind::Image => {
                     self.selected = Some(index);
-                    self.viewer = ViewerState::default();
+                    self.viewer.peek = false;
+                    self.viewer.reset_view();
+                    self.viewer.px = image::image_dimensions(&item.path).ok();
                     cx.notify();
                 }
                 MediaKind::Video => {
@@ -438,7 +447,7 @@ impl Gallery {
         }
     }
 
-    fn close_viewer(&mut self, _: &CloseViewer, _: &mut Window, cx: &mut Context<Self>) {
+    fn close_viewer(&mut self, _: &CloseViewer, window: &mut Window, cx: &mut Context<Self>) {
         if self.context.take().is_some() {
             cx.notify();
             return;
@@ -452,6 +461,11 @@ impl Gallery {
             cx.notify();
             return;
         }
+        if self.selected.is_some() && window.is_fullscreen() {
+            window.toggle_fullscreen();
+            cx.notify();
+            return;
+        }
         if self.selected.take().is_some() {
             self.viewer = ViewerState::default();
             self.stop_slideshow();
@@ -461,11 +475,31 @@ impl Gallery {
 
     fn open_focused(&mut self, _: &OpenFocused, _: &mut Window, cx: &mut Context<Self>) {
         if self.selected.is_some() {
+            if self.viewer.peek {
+                self.viewer.peek = false;
+                cx.notify();
+            }
             return;
         }
         if let Some(i) = self.focused {
             self.open_entry(i, cx);
         }
+    }
+
+    fn open_peek(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(Entry::Media(item)) = self.entries.get(index).cloned() else {
+            return;
+        };
+        if item.kind != MediaKind::Image {
+            self.open_entry(index, cx);
+            return;
+        }
+        self.focused = Some(index);
+        self.selected = Some(index);
+        self.viewer.peek = true;
+        self.viewer.reset_view();
+        self.viewer.px = image::image_dimensions(&item.path).ok();
+        cx.notify();
     }
 
     fn move_focus(&mut self, delta: isize, wrap: bool, cx: &mut Context<Self>) {
@@ -520,10 +554,16 @@ impl Gallery {
     }
 
     fn next_item(&mut self, _: &NextItem, _: &mut Window, cx: &mut Context<Self>) {
+        if self.viewer.peek {
+            self.selected = None;
+            self.viewer = ViewerState::default();
+            cx.notify();
+            return;
+        }
         if self.selected.is_some() {
             self.step_image(1, cx);
         } else if let Some(i) = self.focused {
-            self.open_entry(i, cx);
+            self.open_peek(i, cx);
         }
     }
 
@@ -550,7 +590,10 @@ impl Gallery {
             {
                 self.selected = Some(idx);
                 self.focused = Some(idx);
-                self.viewer = ViewerState::default();
+                self.viewer.reset_view();
+                if let Entry::Media(item) = &self.entries[idx] {
+                    self.viewer.px = image::image_dimensions(&item.path).ok();
+                }
                 cx.notify();
                 return;
             }
@@ -659,9 +702,90 @@ impl Gallery {
 
     fn reset_zoom(&mut self, _: &ResetZoom, _: &mut Window, cx: &mut Context<Self>) {
         if self.selected.is_some() {
-            self.viewer = ViewerState::default();
+            self.viewer.reset_view();
+            self.viewer.mode = viewer::ViewMode::Fit;
             cx.notify();
         }
+    }
+
+    pub(super) fn jump_to_image(&mut self, index: usize, cx: &mut Context<Self>) {
+        if !matches!(
+            self.entries.get(index),
+            Some(Entry::Media(m)) if m.kind == MediaKind::Image
+        ) {
+            return;
+        }
+        self.selected = Some(index);
+        self.focused = Some(index);
+        self.viewer.reset_view();
+        if let Some(Entry::Media(item)) = self.entries.get(index) {
+            self.viewer.px = image::image_dimensions(&item.path).ok();
+        }
+        cx.notify();
+    }
+
+    pub(super) fn toggle_fullscreen(
+        &mut self,
+        _: &ToggleFullscreen,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected.is_none() {
+            return;
+        }
+        window.toggle_fullscreen();
+        cx.notify();
+    }
+
+    fn set_view_mode(&mut self, mode: viewer::ViewMode, cx: &mut Context<Self>) {
+        if self.selected.is_none() {
+            return;
+        }
+        self.viewer.mode = mode;
+        self.viewer.reset_view();
+        cx.notify();
+    }
+
+    pub(super) fn view_fit(&mut self, _: &ViewFit, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_view_mode(viewer::ViewMode::Fit, cx);
+    }
+    pub(super) fn view_fill(&mut self, _: &ViewFill, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_view_mode(viewer::ViewMode::Fill, cx);
+    }
+    pub(super) fn view_actual(&mut self, _: &ViewActual, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_view_mode(viewer::ViewMode::Actual, cx);
+    }
+
+    pub(super) fn rotate_left(&mut self, _: &RotateLeft, _: &mut Window, cx: &mut Context<Self>) {
+        self.rotate_selected(false, cx);
+    }
+    pub(super) fn rotate_right(&mut self, _: &RotateRight, _: &mut Window, cx: &mut Context<Self>) {
+        self.rotate_selected(true, cx);
+    }
+
+    fn rotate_selected(&mut self, clockwise: bool, cx: &mut Context<Self>) {
+        let Some(i) = self.selected else {
+            return;
+        };
+        let Some(Entry::Media(item)) = self.entries.get(i) else {
+            return;
+        };
+        let path = item.path.clone();
+        let Ok(img) = image::open(&path) else {
+            self.show_toast("Could not rotate that file.", None, cx);
+            return;
+        };
+        let out = if clockwise {
+            img.rotate90()
+        } else {
+            img.rotate270()
+        };
+        if out.save(&path).is_err() {
+            self.show_toast("Could not rotate that file.", None, cx);
+            return;
+        }
+        self.thumbs.remove(&path);
+        self.reload_listing(self.folder.clone(), path, true, cx);
     }
 
     fn apply_sort(&mut self) {
@@ -720,6 +844,11 @@ impl Gallery {
         self.set_filter(Filter::All, cx);
     }
     fn filter_images(&mut self, _: &FilterImages, _: &mut Window, cx: &mut Context<Self>) {
+        if self.selected.is_some() && !self.viewer.peek {
+            self.viewer.exif = !self.viewer.exif;
+            cx.notify();
+            return;
+        }
         self.set_filter(Filter::Images, cx);
     }
     fn filter_videos(&mut self, _: &FilterVideos, _: &mut Window, cx: &mut Context<Self>) {

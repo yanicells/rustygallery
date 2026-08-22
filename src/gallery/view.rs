@@ -89,6 +89,12 @@ impl Render for Gallery {
             .on_action(cx.listener(Self::move_to))
             .on_action(cx.listener(Self::copy_to))
             .on_action(cx.listener(Self::undo_last))
+            .on_action(cx.listener(Self::toggle_fullscreen))
+            .on_action(cx.listener(Self::rotate_left))
+            .on_action(cx.listener(Self::rotate_right))
+            .on_action(cx.listener(Self::view_fit))
+            .on_action(cx.listener(Self::view_fill))
+            .on_action(cx.listener(Self::view_actual))
             .size_full()
             .flex()
             .flex_row()
@@ -622,7 +628,7 @@ impl Render for Gallery {
             );
 
         root.when_some(selected, |s, index| {
-            s.child(self.render_lightbox(index, cx))
+            s.child(self.render_lightbox(index, window, cx))
         })
         .when(search_open, |s| s.child(self.render_search(cx)))
         .when(self.name_kind.is_some(), |s| s.child(self.render_name(cx)))
