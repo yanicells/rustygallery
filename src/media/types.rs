@@ -93,6 +93,10 @@ pub(super) fn is_hidden(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+pub(crate) fn is_media_path(path: &Path) -> bool {
+    media_kind(path).is_some()
+}
+
 pub(super) fn media_kind(path: &Path) -> Option<MediaKind> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     if IMAGE_EXTS.iter().any(|e| *e == ext) {
