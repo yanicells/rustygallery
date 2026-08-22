@@ -9,7 +9,7 @@ impl Gallery {
         let Some(toast) = &self.toast else {
             return div().into_any_element();
         };
-        let t = Theme::DARK;
+        let t = Theme::current();
         let can_undo = toast.undo.is_some();
         let text = toast.text.clone();
 

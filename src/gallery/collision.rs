@@ -10,7 +10,7 @@ impl Gallery {
         let Some(ask) = &self.collision else {
             return div().into_any_element();
         };
-        let t = Theme::DARK;
+        let t = Theme::current();
         let name = self.collision_name();
         let more = !ask.remaining.is_empty();
         let apply = ask.apply_all;
