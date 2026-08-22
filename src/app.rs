@@ -6,10 +6,11 @@ use gpui::{
 };
 
 use crate::gallery::{
-    CloseSearch, CloseViewer, ConfirmSearch, CopyPath, CycleSort, DensityLarge, DensityMedium,
-    DensitySmall, FilterAll, FilterImages, FilterVideos, Gallery, GoUp, MoveDown, MoveLeft,
-    MoveRight, MoveUp, NextItem, OpenFocused, OpenFolder, Quit, ResetZoom, RevealInFinder,
-    ToggleFlat, ToggleSaved, ToggleSearch, ToggleSlideshow, ToggleSortDir,
+    CloseName, CloseSearch, CloseViewer, ConfirmName, ConfirmSearch, CopyPath, CycleSort,
+    DensityLarge, DensityMedium, DensitySmall, FilterAll, FilterImages, FilterVideos, Gallery,
+    GoUp, MoveDown, MoveLeft, MoveRight, MoveUp, NewFolder, NextItem, OpenFocused, OpenFolder,
+    Quit, RenameFocused, ResetZoom, RevealInFinder, ToggleFlat, ToggleSaved, ToggleSearch,
+    ToggleSlideshow, ToggleSortDir,
 };
 use crate::prefs::Prefs;
 
@@ -59,6 +60,10 @@ pub fn start(folder: PathBuf, cx: &mut App) {
         KeyBinding::new("enter", ConfirmSearch, Some("Search")),
         KeyBinding::new("cmd-r", RevealInFinder, Some("Gallery")),
         KeyBinding::new("cmd-shift-c", CopyPath, Some("Gallery")),
+        KeyBinding::new("cmd-n", NewFolder, Some("Gallery")),
+        KeyBinding::new("r", RenameFocused, Some("Gallery")),
+        KeyBinding::new("escape", CloseName, Some("NamePrompt")),
+        KeyBinding::new("enter", ConfirmName, Some("NamePrompt")),
     ]);
     cx.set_menus(vec![
         Menu {
@@ -73,6 +78,8 @@ pub fn start(folder: PathBuf, cx: &mut App) {
             name: "File".into(),
             items: vec![
                 MenuItem::action("Open Folder…", OpenFolder),
+                MenuItem::action("New Folder", NewFolder),
+                MenuItem::action("Rename", RenameFocused),
                 MenuItem::action("Go Up", GoUp),
                 MenuItem::separator(),
                 MenuItem::action("Save Library", ToggleSaved),

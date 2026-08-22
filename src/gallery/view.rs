@@ -77,6 +77,8 @@ impl Render for Gallery {
             .on_action(cx.listener(Self::toggle_search))
             .on_action(cx.listener(Self::reveal_in_finder))
             .on_action(cx.listener(Self::copy_path))
+            .on_action(cx.listener(Self::new_folder))
+            .on_action(cx.listener(Self::rename_focused))
             .size_full()
             .flex()
             .flex_row()
@@ -553,5 +555,9 @@ impl Render for Gallery {
             s.child(self.render_lightbox(index, cx))
         })
         .when(search_open, |s| s.child(self.render_search(cx)))
+        .when(self.name_kind.is_some(), |s| s.child(self.render_name(cx)))
+        .when(self.context.is_some(), |s| {
+            s.child(self.render_context(window, cx))
+        })
     }
 }
