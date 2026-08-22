@@ -1,10 +1,11 @@
-use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
+use gpui::{div, prelude::*, px, rgb, Context, ExternalPaths, MouseButton, SharedString, Window};
 
 use crate::media::Entry;
 use crate::ui::{btn, btn_disabled, sidebar_row, Theme, SIDEBAR_W};
 
 use super::{
-    density::Density, Filter, Gallery, GoUp, ToggleFlat, ToggleSaved, ToggleSlideshow, GAP, PAD,
+    density::Density, DropHint, Filter, Gallery, GoUp, ToggleFlat, ToggleSaved, ToggleSlideshow,
+    GAP, PAD,
 };
 
 impl Render for Gallery {
@@ -93,6 +94,19 @@ impl Render for Gallery {
             .flex_row()
             .bg(rgb(t.bg))
             .text_color(rgb(t.text))
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                this.drop_external(None, paths, window, cx);
+            }))
+            .on_drag_move::<ExternalPaths>(cx.listener(
+                |this, event: &gpui::DragMoveEvent<ExternalPaths>, _, cx| {
+                    let paths = event.drag(cx).clone();
+                    this.hint_external(&paths, cx);
+                },
+            ))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.clear_drop_hint(cx)),
+            )
             // Sidebar
             .child(
                 div()
@@ -484,8 +498,36 @@ impl Render for Gallery {
                             .id("grid")
                             .flex_1()
                             .w_full()
+                            .relative()
                             .overflow_y_scroll()
                             .p(px(PAD))
+                            .when_some(self.drop_hint, |s, hint| {
+                                let t = Theme::DARK;
+                                let text = match hint {
+                                    DropHint::OpenLibrary => "Drop to open this folder",
+                                    DropHint::ImportHere => "Drop to add to this folder",
+                                };
+                                s.child(
+                                    div()
+                                        .id("drop-hint")
+                                        .absolute()
+                                        .top_3()
+                                        .left_0()
+                                        .right_0()
+                                        .mx_auto()
+                                        .w(px(280.))
+                                        .py_2()
+                                        .rounded_md()
+                                        .bg(rgb(t.surface))
+                                        .border_1()
+                                        .border_color(rgb(t.accent))
+                                        .text_color(rgb(t.accent_soft))
+                                        .text_xs()
+                                        .flex()
+                                        .justify_center()
+                                        .child(text),
+                                )
+                            })
                             .when(loading, |s| {
                                 s.flex().items_center().justify_center().child(
                                     div().text_color(rgb(t.text_dim)).child("Loading folder…"),

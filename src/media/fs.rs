@@ -234,6 +234,30 @@ pub(crate) fn copy_into(
     collision: Collision,
 ) -> Result<PathBuf, FsError> {
     guarded(from, root)?;
+    place_into(from, dest_dir, root, collision, true)
+}
+
+/// Copy or move a path into `dest_dir`. Source may live outside the library (Finder drop).
+pub(crate) fn import_into(
+    from: &Path,
+    dest_dir: &Path,
+    root: &Path,
+    collision: Collision,
+    copy: bool,
+) -> Result<PathBuf, FsError> {
+    if !from.exists() {
+        return Err(FsError::Io);
+    }
+    place_into(from, dest_dir, root, collision, copy)
+}
+
+fn place_into(
+    from: &Path,
+    dest_dir: &Path,
+    root: &Path,
+    collision: Collision,
+    copy: bool,
+) -> Result<PathBuf, FsError> {
     if !under_root(dest_dir, root) {
         return Err(FsError::OutsideRoot);
     }
@@ -241,12 +265,19 @@ pub(crate) fn copy_into(
         return Err(FsError::Nested);
     }
     let dest = dest_dir.join(from.file_name().ok_or(FsError::Io)?);
-    let dest = if same_path(from, &dest) {
+    if !copy && same_path(from, &dest) {
+        return Ok(from.to_path_buf());
+    }
+    let dest = if copy && same_path(from, &dest) {
         unique_copy_name(from)
     } else {
         prepare_dest(&dest, collision, root)?
     };
-    copy_any(from, &dest)?;
+    if copy {
+        copy_any(from, &dest)?;
+    } else {
+        relocate_move(from, &dest)?;
+    }
     Ok(dest)
 }
 
@@ -273,7 +304,7 @@ pub(crate) fn trash_path(path: &Path, root: &Path) -> Result<PathBuf, FsError> {
 }
 
 pub(crate) fn restore_path(from: &Path, to: &Path, root: &Path) -> Result<PathBuf, FsError> {
-    if !under_root(to, root) {
+    if !under_root(from, root) {
         return Err(FsError::OutsideRoot);
     }
     if to.exists() && !same_path(from, to) {
@@ -417,6 +448,20 @@ mod tests {
         assert_eq!(copied, albums.join("b.jpg"));
         assert!(src2.exists());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_copies_from_outside_the_library() {
+        let root = temp_dir("import-root");
+        let outside = temp_dir("import-src");
+        let src = outside.join("shot.jpg");
+        fs::write(&src, b"pic").unwrap();
+        let dest = import_into(&src, &root, &root, Collision::Fail, true).unwrap();
+        assert_eq!(dest, root.join("shot.jpg"));
+        assert_eq!(fs::read(&dest).unwrap(), b"pic");
+        assert!(src.exists());
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
 
     #[test]
