@@ -3,8 +3,22 @@ use std::time::UNIX_EPOCH;
 
 use gpui::SharedString;
 
-pub(crate) const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff"];
+pub(crate) const IMAGE_EXTS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif", "avif", "jxl",
+    "cr2", "cr3", "nef", "arw", "dng", "raf", "orf", "rw2", "raw",
+];
 pub(crate) const VIDEO_EXTS: &[&str] = &["mp4", "mov", "mkv", "webm", "avi", "m4v"];
+pub(crate) const HEIC_EXTS: &[&str] = &["heic", "heif"];
+pub(crate) const RAW_EXTS: &[&str] = &[
+    "cr2", "cr3", "nef", "arw", "dng", "raf", "orf", "rw2", "raw",
+];
+pub(crate) const JXL_EXTS: &[&str] = &["jxl"];
+
+pub(crate) fn ext_is(path: &Path, exts: &[&str]) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| exts.iter().any(|x| e.eq_ignore_ascii_case(x)))
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MediaKind {
