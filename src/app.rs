@@ -7,12 +7,12 @@ use gpui::{
 
 use crate::gallery::{
     CloseName, CloseSearch, CloseViewer, ConfirmName, ConfirmSearch, CopyPath, CopySelection,
-    CopyTo, CutSelection, CycleSort, DensityLarge, DensityMedium, DensitySmall, Duplicate,
-    FilterAll, FilterImages, FilterVideos, Gallery, GoUp, MoveDown, MoveLeft, MoveRight, MoveTo,
-    MoveToTrash, MoveUp, NewFolder, NextItem, OpenFocused, OpenFolder, PasteSelection, Quit,
-    RenameFocused, ResetZoom, RevealInFinder, RotateLeft, RotateRight, ToggleFlat,
-    ToggleFullscreen, ToggleSaved, ToggleSearch, ToggleSlideshow, ToggleSortDir, Undo, ViewActual,
-    ViewFill, ViewFit,
+    CopyTo, CutSelection, CycleSort, CycleTheme, DensityLarge, DensityMedium, DensitySmall,
+    Duplicate, FilterAll, FilterFavorites, FilterImages, FilterVideos, Gallery, GoUp, MoveDown,
+    MoveLeft, MoveRight, MoveTo, MoveToTrash, MoveUp, NewFolder, NextItem, OpenFocused, OpenFolder,
+    PasteSelection, Quit, RenameFocused, ResetZoom, RevealInFinder, RotateLeft, RotateRight,
+    ToggleFlat, ToggleFullscreen, ToggleSaved, ToggleSearch, ToggleSlideshow, ToggleSortDir,
+    ToggleStar, ToggleVideoPref, Undo, ViewActual, ViewFill, ViewFit,
 };
 use crate::prefs::Prefs;
 
@@ -57,6 +57,10 @@ pub fn start(folder: PathBuf, cx: &mut App) {
         KeyBinding::new("a", FilterAll, Some("Gallery")),
         KeyBinding::new("i", FilterImages, Some("Gallery")),
         KeyBinding::new("v", FilterVideos, Some("Gallery")),
+        KeyBinding::new("cmd-shift-f", FilterFavorites, Some("Gallery")),
+        KeyBinding::new("cmd-shift-s", ToggleStar, Some("Gallery")),
+        KeyBinding::new("cmd-shift-t", CycleTheme, Some("Gallery")),
+        KeyBinding::new("cmd-shift-v", ToggleVideoPref, Some("Gallery")),
         KeyBinding::new("escape", CloseSearch, Some("Search")),
         KeyBinding::new("enter", ConfirmSearch, Some("Search")),
         KeyBinding::new("cmd-r", RevealInFinder, Some("Gallery")),
@@ -95,6 +99,7 @@ pub fn start(folder: PathBuf, cx: &mut App) {
                 MenuItem::action("Go Up", GoUp),
                 MenuItem::separator(),
                 MenuItem::action("Save Library", ToggleSaved),
+                MenuItem::action("Star / Unstar", ToggleStar),
                 MenuItem::separator(),
                 MenuItem::action("Reveal in Finder", RevealInFinder),
                 MenuItem::action("Copy Path", CopyPath),
@@ -127,6 +132,10 @@ pub fn start(folder: PathBuf, cx: &mut App) {
                 MenuItem::action("All", FilterAll),
                 MenuItem::action("Images", FilterImages),
                 MenuItem::action("Videos", FilterVideos),
+                MenuItem::action("Stars", FilterFavorites),
+                MenuItem::separator(),
+                MenuItem::action("Cycle Theme", CycleTheme),
+                MenuItem::action("Video: stay / system", ToggleVideoPref),
                 MenuItem::separator(),
                 MenuItem::action("Cycle Sort", CycleSort),
                 MenuItem::action("Sort Direction", ToggleSortDir),
