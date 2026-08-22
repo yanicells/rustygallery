@@ -51,7 +51,11 @@ impl Prefs {
         }
         let mut out = String::new();
         out.push_str("[flags]\n");
-        out.push_str(if self.flat_mode { "flat=1\n" } else { "flat=0\n" });
+        out.push_str(if self.flat_mode {
+            "flat=1\n"
+        } else {
+            "flat=0\n"
+        });
         out.push_str("\n[recents]\n");
         for p in self.recents.iter().take(12) {
             out.push_str(&p.to_string_lossy());
