@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::media::default_ignore_list;
+
 #[derive(Clone)]
 pub struct Prefs {
     pub recents: Vec<PathBuf>,
@@ -13,6 +15,7 @@ pub struct Prefs {
     pub sort: String,
     pub sort_desc: bool,
     pub window: Option<(f32, f32, f32, f32)>,
+    pub ignore: Vec<String>,
 }
 
 impl Default for Prefs {
@@ -26,6 +29,7 @@ impl Default for Prefs {
             sort: "name".into(),
             sort_desc: false,
             window: None,
+            ignore: default_ignore_list(),
         }
     }
 }
@@ -42,6 +46,7 @@ impl Prefs {
         };
         let mut prefs = Self::default();
         let mut section = "";
+        let mut saw_ignore = false;
         let mut win_x = None;
         let mut win_y = None;
         let mut win_w = None;
@@ -72,6 +77,15 @@ impl Prefs {
                         }
                     }
                 },
+                "[ignore]" => {
+                    if !saw_ignore {
+                        prefs.ignore.clear();
+                        saw_ignore = true;
+                    }
+                    if !line.is_empty() {
+                        prefs.ignore.push(line.to_string());
+                    }
+                }
                 "[window]" => {
                     if let Some(value) = line.strip_prefix("x=") {
                         win_x = value.parse().ok();
@@ -133,6 +147,11 @@ impl Prefs {
         out.push_str("\n[saved]\n");
         for p in &self.saved {
             out.push_str(&p.to_string_lossy());
+            out.push('\n');
+        }
+        out.push_str("\n[ignore]\n");
+        for name in &self.ignore {
+            out.push_str(name);
             out.push('\n');
         }
         let _ = fs::write(path, out);

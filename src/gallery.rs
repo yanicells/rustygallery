@@ -11,7 +11,8 @@ use gpui::{
 };
 
 use crate::media::{
-    create_folder, load_or_make_thumb, scan_browse, scan_folder_recursive, Entry, MediaKind,
+    create_folder, load_or_make_thumb, scan_browse, scan_folder_recursive, stamp_entries, Entry,
+    MediaKind,
 };
 use crate::prefs::Prefs;
 use crate::ui::SIDEBAR_W;
@@ -19,6 +20,7 @@ use crate::ui::SIDEBAR_W;
 mod collision;
 mod context;
 mod density;
+mod drag;
 mod grid;
 mod lightbox;
 mod name;
@@ -28,6 +30,7 @@ mod sort;
 mod toast;
 mod view;
 mod viewer;
+mod watch;
 
 use density::Density;
 use ops::{Clip, CollisionAsk, Toast};
@@ -138,7 +141,15 @@ pub struct Gallery {
     toast: Option<Toast>,
     toast_gen: u64,
     collision: Option<CollisionAsk>,
+    watch_stamp: Option<u64>,
+    drop_hint: Option<DropHint>,
     _bounds: Option<Subscription>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum DropHint {
+    OpenLibrary,
+    ImportHere,
 }
 
 impl Gallery {
@@ -187,6 +198,8 @@ impl Gallery {
             toast: None,
             toast_gen: 0,
             collision: None,
+            watch_stamp: None,
+            drop_hint: None,
             _bounds: None,
         };
         gallery._bounds = Some(cx.observe_window_bounds(window, |this, window, _cx| {
@@ -196,6 +209,7 @@ impl Gallery {
             gallery.prefs.mark_opened();
         }
         gallery.open_library(folder, true, cx);
+        gallery.start_watch(cx);
         gallery
     }
 
@@ -252,17 +266,19 @@ impl Gallery {
         self.loading = true;
         self.load_gen += 1;
         self.thumb_gen += 1;
+        self.watch_stamp = None;
         let gen = self.load_gen;
         let flat = self.prefs.flat_mode;
+        let ignore = self.prefs.ignore.clone();
         cx.notify();
 
         cx.spawn(async move |this, cx| {
             let entries = cx
                 .background_spawn(async move {
                     if flat {
-                        scan_folder_recursive(&folder)
+                        scan_folder_recursive(&folder, &ignore)
                     } else {
-                        scan_browse(&folder)
+                        scan_browse(&folder, &ignore)
                     }
                 })
                 .await;
@@ -273,6 +289,7 @@ impl Gallery {
                 }
                 this.entries = entries;
                 this.apply_sort();
+                this.watch_stamp = Some(stamp_entries(&this.entries));
                 this.loading = false;
                 let restore = this.reload_focus.take();
                 let reopen = std::mem::take(&mut this.reload_open);

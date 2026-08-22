@@ -44,12 +44,48 @@ pub fn load_or_make_thumb(path: &Path) -> Option<Arc<Image>> {
     }
 
     let img = image::open(path).ok()?;
-    let thumb = img.thumbnail(THUMB_MAX, THUMB_MAX);
+    let thumb = img.thumbnail(THUMB_MAX, THUMB_MAX).to_rgb8();
     let mut bytes = Vec::new();
     {
         let mut cursor = Cursor::new(&mut bytes);
         thumb.write_to(&mut cursor, image::ImageFormat::Jpeg).ok()?;
     }
+    if bytes.is_empty() {
+        return None;
+    }
     let _ = fs::write(&cache_path, &bytes);
     Some(Arc::new(Image::from_bytes(ImageFormat::Jpeg, bytes)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{Rgba, RgbaImage};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_png() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "rusty-thumb-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("alpha.png");
+        let mut img = RgbaImage::new(16, 16);
+        for pixel in img.pixels_mut() {
+            *pixel = Rgba([40, 180, 90, 128]);
+        }
+        img.save(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn encodes_png_with_alpha_as_jpeg_thumb() {
+        let path = temp_png();
+        let thumb = load_or_make_thumb(&path);
+        assert!(thumb.is_some(), "alpha PNG should still produce a thumb");
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
 }

@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use gpui::{Context, PromptLevel, Window};
 
 use crate::media::{
-    copy_into, count_tree, duplicate, move_into, rename_with, restore_path, trash_path, under_root,
-    Collision, Entry, FsError, MediaKind,
+    copy_into, count_tree, duplicate, import_into, move_into, rename_with, restore_path,
+    trash_path, under_root, Collision, Entry, FsError, MediaKind,
 };
 
 use super::Gallery;
@@ -48,6 +48,7 @@ pub(super) struct Toast {
 pub(super) enum PendingKind {
     Move { dest_dir: PathBuf },
     Copy { dest_dir: PathBuf },
+    Import { dest_dir: PathBuf, copy: bool },
     Rename { new_name: String },
 }
 
@@ -63,7 +64,59 @@ pub(super) struct CollisionAsk {
     restore_clip: Option<Clip>,
 }
 
+fn dest_is_here(kind: &PendingKind, folder: &Path) -> bool {
+    match kind {
+        PendingKind::Move { dest_dir }
+        | PendingKind::Copy { dest_dir }
+        | PendingKind::Import { dest_dir, .. } => dest_dir == folder,
+        PendingKind::Rename { .. } => true,
+    }
+}
+
+fn job_message(kind: &PendingKind, n: usize) -> String {
+    match kind {
+        PendingKind::Move { .. } => format!("Moved {n} items"),
+        PendingKind::Copy { .. } | PendingKind::Import { copy: true, .. } => {
+            format!("Copied {n} items")
+        }
+        PendingKind::Import { copy: false, .. } => format!("Moved {n} items"),
+        PendingKind::Rename { .. } => "Renamed".into(),
+    }
+}
+
 impl Gallery {
+    pub(super) fn place_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        dest_dir: PathBuf,
+        copy: bool,
+        external: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if paths.is_empty() {
+            return;
+        }
+        let next = self.neighbor_path(&paths);
+        let kind = if external {
+            PendingKind::Import { dest_dir, copy }
+        } else if copy {
+            PendingKind::Copy { dest_dir }
+        } else {
+            PendingKind::Move { dest_dir }
+        };
+        self.pump_job(
+            kind,
+            paths,
+            Vec::new(),
+            None,
+            self.folder.clone(),
+            next,
+            false,
+            None,
+            cx,
+        );
+    }
+
     pub(super) fn is_cut(&self, path: &Path) -> bool {
         matches!(&self.clip, Some(Clip::Cut(paths)) if paths.iter().any(|p| p == path))
     }
@@ -163,6 +216,17 @@ impl Gallery {
                 let dest = copy_into(from, dest_dir, &self.root, collision)?;
                 Ok(UndoItem::Trash { path: dest })
             }
+            PendingKind::Import { dest_dir, copy } => {
+                let dest = import_into(from, dest_dir, &self.root, collision, *copy)?;
+                if *copy {
+                    Ok(UndoItem::Trash { path: dest })
+                } else {
+                    Ok(UndoItem::PutBack {
+                        from: dest,
+                        to: from.to_path_buf(),
+                    })
+                }
+            }
             PendingKind::Rename { new_name } => {
                 let dest = rename_with(from, new_name, &self.root, collision)?;
                 Ok(UndoItem::PutBack {
@@ -218,16 +282,9 @@ impl Gallery {
             }
         }
         let n = done.len();
-        let dest_here = match &kind {
-            PendingKind::Move { dest_dir } | PendingKind::Copy { dest_dir } => dest_dir == &folder,
-            PendingKind::Rename { .. } => true,
-        };
+        let dest_here = dest_is_here(&kind, &folder);
         let focus = if dest_here { None } else { next };
-        let message = match &kind {
-            PendingKind::Move { .. } => format!("Moved {n} items"),
-            PendingKind::Copy { .. } => format!("Copied {n} items"),
-            PendingKind::Rename { .. } => "Renamed".into(),
-        };
+        let message = job_message(&kind, n);
         self.finish_job(done, folder, focus, reopen, message, cx);
     }
 
@@ -250,18 +307,9 @@ impl Gallery {
             }
             if !ask.done.is_empty() {
                 let n = ask.done.len();
-                let dest_here = match &ask.kind {
-                    PendingKind::Move { dest_dir } | PendingKind::Copy { dest_dir } => {
-                        dest_dir == &ask.folder
-                    }
-                    PendingKind::Rename { .. } => true,
-                };
+                let dest_here = dest_is_here(&ask.kind, &ask.folder);
                 let focus = if dest_here { None } else { ask.next };
-                let message = match ask.kind {
-                    PendingKind::Move { .. } => format!("Moved {n} items"),
-                    PendingKind::Copy { .. } => format!("Copied {n} items"),
-                    PendingKind::Rename { .. } => "Renamed".into(),
-                };
+                let message = job_message(&ask.kind, n);
                 self.finish_job(ask.done, ask.folder, focus, ask.reopen, message, cx);
                 return;
             }
