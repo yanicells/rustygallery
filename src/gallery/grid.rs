@@ -1,10 +1,12 @@
 use gpui::{
-    div, img, prelude::*, px, rgb, ClickEvent, Context, MouseButton, MouseDownEvent, ObjectFit,
+    div, img, prelude::*, px, rgb, ClickEvent, Context, ExternalPaths, MouseButton, MouseDownEvent,
+    ObjectFit,
 };
 
 use crate::media::{Entry, MediaKind};
 use crate::ui::Theme;
 
+use super::drag::{drag_preview, TileDrag};
 use super::Gallery;
 
 impl Gallery {
@@ -20,6 +22,12 @@ impl Gallery {
         let cut = self.is_cut(entry.path());
         let name = entry.name().clone();
         let t = Theme::DARK;
+        let folder_dest = match entry {
+            Entry::Folder(folder) => Some(folder.path.clone()),
+            Entry::Media(_) => None,
+        };
+        let drag = self.drag_paths(index);
+        let can_drag = !drag.is_empty();
 
         let media = match entry {
             Entry::Folder(folder) => div()
@@ -70,15 +78,10 @@ impl Gallery {
                         .object_fit(ObjectFit::Cover)
                         .into_any_element()
                 } else {
-                    div()
+                    img(item.path.clone())
+                        .id(("file", index))
                         .size_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .bg(rgb(t.tile_media))
-                        .text_color(rgb(t.text_hint))
-                        .text_xs()
-                        .child("…")
+                        .object_fit(ObjectFit::Cover)
                         .into_any_element()
                 }
             }
@@ -92,6 +95,9 @@ impl Gallery {
             .gap_1()
             .when(cut, |s| s.opacity(0.45))
             .cursor_pointer()
+            .when(can_drag, |s| {
+                s.on_drag(TileDrag { paths: drag }, drag_preview)
+            })
             .on_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
                 this.click_tile(index, event, cx);
             }))
@@ -112,6 +118,25 @@ impl Gallery {
                     .when(checked, |s| s.border_color(rgb(t.accent)))
                     .when(!checked && focused, |s| s.border_color(rgb(t.accent_soft)))
                     .when(!checked && !focused, |s| s.border_color(rgb(t.tile)))
+                    .when_some(folder_dest.clone(), |s, dest| {
+                        let dest_tiles = dest.clone();
+                        s.drag_over::<TileDrag>(|s, _, _, _| {
+                            let t = Theme::DARK;
+                            s.border_color(rgb(t.accent)).border_4()
+                        })
+                        .drag_over::<ExternalPaths>(|s, _, _, _| {
+                            let t = Theme::DARK;
+                            s.border_color(rgb(t.accent)).border_4()
+                        })
+                        .on_drop(cx.listener(move |this, drag: &TileDrag, window, cx| {
+                            this.drop_tiles(dest_tiles.clone(), drag, window, cx);
+                        }))
+                        .on_drop(cx.listener(
+                            move |this, paths: &ExternalPaths, window, cx| {
+                                this.drop_external(Some(dest.clone()), paths, window, cx);
+                            },
+                        ))
+                    })
                     .child(media),
             )
             .child(
