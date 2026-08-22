@@ -10,8 +10,9 @@ use crate::gallery::{
     CopyTo, CutSelection, CycleSort, DensityLarge, DensityMedium, DensitySmall, Duplicate,
     FilterAll, FilterImages, FilterVideos, Gallery, GoUp, MoveDown, MoveLeft, MoveRight, MoveTo,
     MoveToTrash, MoveUp, NewFolder, NextItem, OpenFocused, OpenFolder, PasteSelection, Quit,
-    RenameFocused, ResetZoom, RevealInFinder, ToggleFlat, ToggleSaved, ToggleSearch,
-    ToggleSlideshow, ToggleSortDir, Undo,
+    RenameFocused, ResetZoom, RevealInFinder, RotateLeft, RotateRight, ToggleFlat,
+    ToggleFullscreen, ToggleSaved, ToggleSearch, ToggleSlideshow, ToggleSortDir, Undo, ViewActual,
+    ViewFill, ViewFit,
 };
 use crate::prefs::Prefs;
 
@@ -71,6 +72,10 @@ pub fn start(folder: PathBuf, cx: &mut App) {
         KeyBinding::new("cmd-z", Undo, Some("Gallery")),
         KeyBinding::new("cmd-backspace", MoveToTrash, Some("Gallery")),
         KeyBinding::new("delete", MoveToTrash, Some("Gallery")),
+        KeyBinding::new("f11", ToggleFullscreen, Some("Gallery")),
+        KeyBinding::new("cmd-ctrl-f", ToggleFullscreen, Some("Gallery")),
+        KeyBinding::new("[", RotateLeft, Some("Gallery")),
+        KeyBinding::new("]", RotateRight, Some("Gallery")),
     ]);
     cx.set_menus(vec![
         Menu {
@@ -126,6 +131,11 @@ pub fn start(folder: PathBuf, cx: &mut App) {
                 MenuItem::action("Cycle Sort", CycleSort),
                 MenuItem::action("Sort Direction", ToggleSortDir),
                 MenuItem::action("Search…", ToggleSearch),
+                MenuItem::separator(),
+                MenuItem::action("Fullscreen", ToggleFullscreen),
+                MenuItem::action("Fit", ViewFit),
+                MenuItem::action("Fill", ViewFill),
+                MenuItem::action("Actual Size", ViewActual),
             ],
         },
         Menu {
@@ -133,6 +143,9 @@ pub fn start(folder: PathBuf, cx: &mut App) {
             items: vec![
                 MenuItem::action("Slideshow", ToggleSlideshow),
                 MenuItem::action("Reset Zoom", ResetZoom),
+                MenuItem::separator(),
+                MenuItem::action("Rotate Left", RotateLeft),
+                MenuItem::action("Rotate Right", RotateRight),
             ],
         },
     ]);

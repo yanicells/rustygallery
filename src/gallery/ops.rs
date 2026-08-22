@@ -148,7 +148,7 @@ impl Gallery {
             .and_then(|i| self.entries.get(i).map(|e| e.path().to_path_buf()))
     }
 
-    fn show_toast(
+    pub(super) fn show_toast(
         &mut self,
         text: impl Into<String>,
         undo: Option<Vec<UndoItem>>,
