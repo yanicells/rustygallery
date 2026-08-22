@@ -16,19 +16,23 @@ Short rules for working on this repo.
 
 Do a **structure pass** first (see the refactor issue). Prefer scoped modules over a growing `main.rs`.
 
-## Layout (target)
+## Layout
 
 ```
 src/
-  main.rs          # entry + window/menu wiring only
-  app/             # top-level app state / shell
-  gallery/         # grid, browse, lightbox
-  media/           # scan, entry types, formats
-  prefs/           # saved/recents/settings
-  ui/              # shared chrome (sidebar, buttons, theme tokens)
+  main.rs          # process entry only
+  app.rs           # window, menus, keys, folder resolve
+  app/             # tray / process chrome
+  gallery.rs       # entity, actions, load/nav
+  gallery/         # density, viewer, grid, lightbox, shell view
+  media.rs         # types / scan / thumbs re-exports
+  media/           # entry types, folder walk, thumb cache
+  prefs.rs         # saved / recents / flags
+  ui.rs            # shared chrome re-exports
+  ui/              # theme tokens, button, sidebar row
 ```
 
-Group by feature. Keep UI pieces next to the feature that owns them. Shared-only code goes in `ui/`.
+Group by feature. Keep UI pieces next to the feature that owns them. Shared-only code goes in `ui/`. When a file grows, add `foo/*.rs` beside `foo.rs`.
 
 ## Code quality
 
