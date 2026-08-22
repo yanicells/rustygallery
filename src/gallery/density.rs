@@ -21,4 +21,20 @@ impl Density {
             Self::Large => "L",
         }
     }
+
+    pub(crate) fn as_pref(self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Medium => "medium",
+            Self::Large => "large",
+        }
+    }
+
+    pub(crate) fn from_pref(value: &str) -> Self {
+        match value {
+            "small" => Self::Small,
+            "large" => Self::Large,
+            _ => Self::Medium,
+        }
+    }
 }
