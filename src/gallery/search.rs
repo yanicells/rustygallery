@@ -6,7 +6,7 @@ use super::{CloseSearch, ConfirmSearch, Gallery};
 
 impl Gallery {
     pub(super) fn render_search(&self, cx: &Context<Self>) -> impl IntoElement {
-        let t = Theme::DARK;
+        let t = Theme::current();
         let hits = self.search_hits();
         let choice = self.search_choice.min(hits.len().saturating_sub(1));
         let query: SharedString = if self.search_query.is_empty() {

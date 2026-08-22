@@ -1,4 +1,8 @@
-/// Named colors for chrome. Add another `const` palette when light/system land.
+use std::cell::Cell;
+
+use gpui::WindowAppearance;
+
+/// Named colors for chrome. Surfaces read `Theme::current()` after render sets it.
 #[derive(Clone, Copy)]
 pub struct Theme {
     pub bg: u32,
@@ -27,6 +31,10 @@ pub struct Theme {
     pub prominent_hover: u32,
     pub lightbox: u32,
     pub on_accent: u32,
+}
+
+thread_local! {
+    static CURRENT: Cell<Theme> = const { Cell::new(Theme::DARK) };
 }
 
 impl Theme {
@@ -58,4 +66,82 @@ impl Theme {
         lightbox: 0x0a0a0a,
         on_accent: 0xffffff,
     };
+
+    pub const LIGHT: Self = Self {
+        bg: 0xf4f4f2,
+        surface: 0xecece8,
+        surface_hover: 0xe0e0dc,
+        tile: 0xe4e4e0,
+        tile_folder: 0xdddcd6,
+        tile_media: 0xe8e8e4,
+        border: 0xd0d0ca,
+        text: 0x1a1a18,
+        text_muted: 0x5c5c56,
+        text_dim: 0x6a6a64,
+        text_faint: 0x8a8a84,
+        text_hint: 0x9a9a94,
+        accent: 0x1a1a18,
+        accent_soft: 0x3a3a36,
+        inactive: 0x6a6a64,
+        name_idle: 0x5a5a54,
+        btn: 0xe0e0da,
+        btn_active: 0xd0d0ca,
+        btn_hover: 0xd8d8d2,
+        btn_text: 0x2a2a26,
+        row_active: 0xd4d4ce,
+        prominent: 0x1a1a18,
+        prominent_text: 0xf4f4f2,
+        prominent_hover: 0x000000,
+        lightbox: 0xf7f7f4,
+        on_accent: 0x1a1a18,
+    };
+
+    pub fn resolve(pref: &str, appearance: WindowAppearance) -> Self {
+        match pref {
+            "light" => Self::LIGHT,
+            "system"
+                if matches!(
+                    appearance,
+                    WindowAppearance::Light | WindowAppearance::VibrantLight
+                ) =>
+            {
+                Self::LIGHT
+            }
+            _ => Self::DARK,
+        }
+    }
+
+    pub fn set_current(theme: Self) {
+        CURRENT.set(theme);
+    }
+
+    pub fn current() -> Self {
+        CURRENT.get()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Theme;
+    use gpui::WindowAppearance;
+
+    #[test]
+    fn resolve_follows_pref_then_system() {
+        assert_eq!(
+            Theme::resolve("light", WindowAppearance::Dark).bg,
+            Theme::LIGHT.bg
+        );
+        assert_eq!(
+            Theme::resolve("system", WindowAppearance::Light).bg,
+            Theme::LIGHT.bg
+        );
+        assert_eq!(
+            Theme::resolve("system", WindowAppearance::Dark).bg,
+            Theme::DARK.bg
+        );
+        assert_eq!(
+            Theme::resolve("dark", WindowAppearance::Light).bg,
+            Theme::DARK.bg
+        );
+    }
 }
