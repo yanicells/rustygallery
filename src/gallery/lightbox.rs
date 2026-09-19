@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use gpui::{div, img, prelude::*, px, relative, rgb, Context, MouseButton, ObjectFit, Window};
 
-use crate::media::{display_source, first_frame_image, is_animated, Entry, MediaKind};
+use crate::media::{is_animated, Entry, MediaKind};
 use crate::ui::{btn, Theme};
 
 use super::exif::read_exif;
@@ -34,7 +34,7 @@ impl Gallery {
         imgs[start..end].to_vec()
     }
 
-    fn neighbor_paths(&self, current: usize) -> Vec<PathBuf> {
+    pub(super) fn neighbor_paths(&self, current: usize) -> Vec<PathBuf> {
         let imgs = self.visible_image_indices();
         let Some(pos) = imgs.iter().position(|&i| i == current) else {
             return Vec::new();
@@ -58,7 +58,17 @@ impl Gallery {
             return div().into_any_element();
         };
         let t = Theme::current();
-        let source = display_source(&item.path);
+        let Some(source) = self.viewer.source.clone() else {
+            return div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(rgb(t.lightbox))
+                .child("Loading preview…")
+                .into_any_element();
+        };
         if self.viewer.peek {
             return self.render_peek(source, item.modified, cx);
         }
@@ -89,7 +99,7 @@ impl Gallery {
                 ""
             }
         );
-        let neighbors = self.neighbor_paths(index);
+        let neighbors = self.viewer.neighbors.clone();
         let strip = self.filmstrip_indices(index);
         let exif = self.viewer.exif.then(|| read_exif(&item.path));
         let hint = if video {
@@ -122,7 +132,6 @@ impl Gallery {
                     .min_h_0()
                     .child(self.render_lightbox_body(
                         source,
-                        item.path.clone(),
                         item.modified,
                         zoom,
                         pan,
@@ -136,7 +145,8 @@ impl Gallery {
             )
             .child(self.render_filmstrip(index, &strip, cx))
             .children(neighbors.into_iter().enumerate().map(|(i, path)| {
-                img(display_source(&path))
+                img(path)
+                    .with_fallback(preview_unavailable)
                     .id(("prefetch", i))
                     .w(px(0.))
                     .h(px(0.))
@@ -168,6 +178,7 @@ impl Gallery {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_viewer_down))
             .child(
                 img(path)
+                    .with_fallback(preview_unavailable)
                     .id(("peek-img", modified))
                     .w_full()
                     .h_full()
@@ -357,7 +368,6 @@ impl Gallery {
     fn render_lightbox_body(
         &self,
         source: PathBuf,
-        original: PathBuf,
         modified: u64,
         zoom: f32,
         pan: gpui::Point<gpui::Pixels>,
@@ -367,7 +377,7 @@ impl Gallery {
         paused: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let still = paused.then(|| first_frame_image(&original)).flatten();
+        let still = paused.then(|| self.viewer.still.clone()).flatten();
         let image = if let Some(frame) = still {
             match mode {
                 ViewMode::Fit => img(frame)
@@ -392,11 +402,13 @@ impl Gallery {
         } else {
             match mode {
                 ViewMode::Fit => img(source)
+                    .with_fallback(preview_unavailable)
                     .id(("full", modified))
                     .size_full()
                     .object_fit(ObjectFit::Contain)
                     .into_any_element(),
                 ViewMode::Fill => img(source)
+                    .with_fallback(preview_unavailable)
                     .id(("full-fill", modified))
                     .size_full()
                     .object_fit(ObjectFit::Cover)
@@ -404,6 +416,7 @@ impl Gallery {
                 ViewMode::Actual => {
                     let (w, h) = self.viewer.px.unwrap_or((800, 600));
                     img(source)
+                        .with_fallback(preview_unavailable)
                         .id(("full-actual", modified))
                         .w(px(w as f32 * zoom))
                         .h(px(h as f32 * zoom))
@@ -565,6 +578,17 @@ fn render_exif_panel(info: &super::exif::ExifInfo) -> impl IntoElement {
                 )
                 .child(div().text_sm().text_color(rgb(t.text)).child(v.clone()))
         }))
+}
+
+fn preview_unavailable() -> gpui::AnyElement {
+    div()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(rgb(Theme::current().text_muted))
+        .child("Preview unavailable")
+        .into_any_element()
 }
 
 #[cfg(test)]

@@ -22,6 +22,9 @@ pub(crate) struct ViewerState {
     pub(crate) exif: bool,
     pub(crate) px: Option<(u32, u32)>,
     pub(crate) anim_paused: bool,
+    pub(crate) source: Option<std::path::PathBuf>,
+    pub(crate) still: Option<std::sync::Arc<gpui::Image>>,
+    pub(crate) neighbors: Vec<std::path::PathBuf>,
 }
 
 impl Default for ViewerState {
@@ -36,6 +39,9 @@ impl Default for ViewerState {
             exif: false,
             px: None,
             anim_paused: false,
+            source: None,
+            still: None,
+            neighbors: Vec::new(),
         }
     }
 }

@@ -6,7 +6,16 @@ use std::{
     time::UNIX_EPOCH,
 };
 
+#[cfg(target_os = "macos")]
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::SystemTime,
+};
+
 use super::types::{ext_is, HEIC_EXTS, JXL_EXTS, RAW_EXTS};
+
+#[cfg(target_os = "macos")]
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn cache_dir() -> PathBuf {
     let dir = std::env::temp_dir().join("rusty-gallery-thumbs");
@@ -34,9 +43,11 @@ pub fn preview_jpeg(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
     if let Ok(img) = image::open(path) {
         return encode_jpeg(&img, max_edge);
     }
-    if let Some(bytes) = embedded_jpeg(path) {
-        if let Ok(img) = image::load_from_memory(&bytes) {
-            return encode_jpeg(&img, max_edge);
+    if ext_is(path, RAW_EXTS) {
+        if let Some(bytes) = embedded_jpeg(path) {
+            if let Ok(img) = image::load_from_memory(&bytes) {
+                return encode_jpeg(&img, max_edge);
+            }
         }
     }
     #[cfg(target_os = "macos")]
@@ -59,7 +70,7 @@ pub fn display_source(path: &Path) -> PathBuf {
         return path.to_path_buf();
     };
     let dest = cache_dir().join(format!("{key:x}-full.jpg"));
-    if dest.exists() && dest.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+    if image::open(&dest).is_ok() {
         return dest;
     }
     if let Some(bytes) = preview_jpeg(path, 2048) {
@@ -85,7 +96,7 @@ fn can_paint_directly(path: &Path) -> bool {
     let ext = ext.to_ascii_lowercase();
     matches!(
         ext.as_str(),
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "avif"
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tif" | "tiff"
     ) && !ext_is(path, RAW_EXTS)
         && !ext_is(path, HEIC_EXTS)
         && !ext_is(path, JXL_EXTS)
@@ -139,8 +150,7 @@ fn find_eoi(data: &[u8]) -> Option<usize> {
 
 #[cfg(target_os = "macos")]
 fn macos_preview(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
-    let dir = cache_dir().join("ql");
-    fs::create_dir_all(&dir).ok()?;
+    let dir = unique_temp_dir("ql")?;
     let status = std::process::Command::new("qlmanage")
         .args(["-t", "-s", &max_edge.to_string(), "-o"])
         .arg(&dir)
@@ -148,29 +158,34 @@ fn macos_preview(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .ok()?;
-    if !status.success() {
-        return sips_jpeg(path, max_edge);
-    }
-    let name = path.file_name()?.to_string_lossy();
-    let out = dir.join(format!("{name}.png"));
-    let bytes = fs::read(&out).ok().or_else(|| {
-        fs::read_dir(&dir).ok()?.find_map(|e| {
-            let p = e.ok()?.path();
-            p.file_name()?
-                .to_str()?
-                .starts_with(name.split('.').next()?)
-                .then(|| fs::read(p).ok())
-                .flatten()
+        .ok();
+    let bytes = if status.is_some_and(|status| status.success()) {
+        let name = path.file_name()?.to_string_lossy();
+        let out = dir.join(format!("{name}.png"));
+        fs::read(&out).ok().or_else(|| {
+            fs::read_dir(&dir).ok()?.find_map(|e| {
+                let p = e.ok()?.path();
+                p.is_file().then(|| fs::read(p).ok()).flatten()
+            })
         })
-    })?;
-    let _ = fs::remove_file(&out);
-    Some(bytes)
+    } else {
+        None
+    };
+    let _ = fs::remove_dir_all(&dir);
+    if bytes
+        .as_deref()
+        .is_some_and(|bytes| image::load_from_memory(bytes).is_ok())
+    {
+        bytes
+    } else {
+        sips_jpeg(path, max_edge)
+    }
 }
 
 #[cfg(target_os = "macos")]
 fn sips_jpeg(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
-    let dest = cache_dir().join(format!("sips-{}.jpg", std::process::id()));
+    let dir = unique_temp_dir("sips")?;
+    let dest = dir.join("preview.jpg");
     let status = std::process::Command::new("sips")
         .args(["-s", "format", "jpeg", "-Z", &max_edge.to_string()])
         .arg(path)
@@ -179,13 +194,30 @@ fn sips_jpeg(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .ok()?;
-    if !status.success() {
+        .ok();
+    if !status.is_some_and(|status| status.success()) {
+        let _ = fs::remove_dir_all(&dir);
         return None;
     }
     let bytes = fs::read(&dest).ok();
-    let _ = fs::remove_file(&dest);
+    let _ = fs::remove_dir_all(&dir);
     bytes.filter(|b| !b.is_empty())
+}
+
+#[cfg(target_os = "macos")]
+fn unique_temp_dir(prefix: &str) -> Option<PathBuf> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    for _ in 0..8 {
+        let id = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("rusty-gallery-{prefix}-{now}-{id}"));
+        if fs::create_dir(&dir).is_ok() {
+            return Some(dir);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -208,5 +240,17 @@ mod tests {
     fn skips_tiny_jpeg_noise() {
         let blob = [0xff, 0xd8, 0xff, 1, 0xff, 0xd9];
         assert!(largest_jpeg(&blob).is_none());
+    }
+
+    #[test]
+    fn routes_avif_through_preview_conversion() {
+        assert!(!can_paint_directly(Path::new("photo.avif")));
+        assert!(can_paint_directly(Path::new("photo.jpg")));
+    }
+
+    #[test]
+    fn embedded_scan_is_reserved_for_raw_extensions() {
+        assert!(ext_is(Path::new("photo.cr3"), RAW_EXTS));
+        assert!(!ext_is(Path::new("clip.mp4"), RAW_EXTS));
     }
 }
