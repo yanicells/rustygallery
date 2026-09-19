@@ -97,7 +97,20 @@ impl Gallery {
                         .object_fit(ObjectFit::Cover)
                         .into_any_element()
                 } else {
-                    div().size_full().bg(rgb(t.tile_media)).into_any_element()
+                    div()
+                        .size_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(rgb(t.tile_media))
+                        .text_color(rgb(t.text_muted))
+                        .text_xs()
+                        .child(if self.failed_thumbs.contains(&item.path) {
+                            "Preview unavailable"
+                        } else {
+                            "Loading…"
+                        })
+                        .into_any_element()
                 }
             }
         };

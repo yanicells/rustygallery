@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -26,6 +26,7 @@ mod grid;
 mod lightbox;
 mod name;
 mod ops;
+mod preview;
 mod search;
 mod sort;
 mod toast;
@@ -122,6 +123,8 @@ pub struct Gallery {
     folder: PathBuf,
     entries: Vec<Entry>,
     thumbs: HashMap<PathBuf, Arc<Image>>,
+    failed_thumbs: HashSet<PathBuf>,
+    preview_gen: u64,
     prefs: Prefs,
     loading: bool,
     load_gen: u64,
@@ -180,6 +183,8 @@ impl Gallery {
             folder: folder.clone(),
             entries: Vec::new(),
             thumbs: HashMap::new(),
+            failed_thumbs: HashSet::new(),
+            preview_gen: 0,
             prefs,
             loading: false,
             load_gen: 0,
@@ -274,6 +279,8 @@ impl Gallery {
         self.folder = folder.clone();
         self.entries.clear();
         self.thumbs.clear();
+        self.failed_thumbs.clear();
+        self.preview_gen += 1;
         self.focused = None;
         self.checked.clear();
         self.anchor = None;
@@ -326,6 +333,7 @@ impl Gallery {
                             )
                         {
                             this.selected = Some(i);
+                            this.prepare_preview(cx);
                         }
                     } else if !this.entries.is_empty() {
                         this.focused = Some(0);
@@ -365,9 +373,9 @@ impl Gallery {
                     .background_spawn(async move {
                         chunk
                             .into_iter()
-                            .filter_map(|path| {
-                                let thumb = load_or_make_thumb(&path)?;
-                                Some((path, thumb))
+                            .map(|path| {
+                                let thumb = load_or_make_thumb(&path);
+                                (path, thumb)
                             })
                             .collect::<Vec<_>>()
                     })
@@ -379,7 +387,11 @@ impl Gallery {
                             return false;
                         }
                         for (path, thumb) in loaded {
-                            this.thumbs.insert(path, thumb);
+                            if let Some(thumb) = thumb {
+                                this.thumbs.insert(path, thumb);
+                            } else {
+                                this.failed_thumbs.insert(path);
+                            }
                         }
                         cx.notify();
                         true
@@ -444,7 +456,7 @@ impl Gallery {
                     self.selected = Some(index);
                     self.viewer.peek = false;
                     self.viewer.reset_view();
-                    self.viewer.px = image::image_dimensions(&item.path).ok();
+                    self.prepare_preview(cx);
                     cx.notify();
                 }
                 MediaKind::Video => {
@@ -452,7 +464,7 @@ impl Gallery {
                         self.selected = Some(index);
                         self.viewer.peek = false;
                         self.viewer.reset_view();
-                        self.viewer.px = None;
+                        self.prepare_preview(cx);
                         cx.notify();
                     } else {
                         self.selected = None;
@@ -516,7 +528,7 @@ impl Gallery {
         self.selected = Some(index);
         self.viewer.peek = true;
         self.viewer.reset_view();
-        self.viewer.px = image::image_dimensions(&item.path).ok();
+        self.prepare_preview(cx);
         cx.notify();
     }
 
@@ -619,12 +631,7 @@ impl Gallery {
                 self.focused = Some(idx);
                 self.viewer.reset_view();
                 self.viewer.anim_paused = false;
-                self.viewer.px = match &self.entries[idx] {
-                    Entry::Media(item) if item.kind == MediaKind::Image => {
-                        image::image_dimensions(&item.path).ok()
-                    }
-                    _ => None,
-                };
+                self.prepare_preview(cx);
                 cx.notify();
                 return;
             }
@@ -747,12 +754,7 @@ impl Gallery {
         self.focused = Some(index);
         self.viewer.reset_view();
         self.viewer.anim_paused = false;
-        self.viewer.px = match self.entries.get(index) {
-            Some(Entry::Media(item)) if item.kind == MediaKind::Image => {
-                image::image_dimensions(&item.path).ok()
-            }
-            _ => None,
-        };
+        self.prepare_preview(cx);
         cx.notify();
     }
 
@@ -1163,7 +1165,10 @@ impl Gallery {
         if total == 0 {
             return None;
         }
-        Some((self.thumbs.len().min(total), total))
+        Some((
+            (self.thumbs.len() + self.failed_thumbs.len()).min(total),
+            total,
+        ))
     }
 
     fn status_left(&self, folders: usize, media: usize) -> SharedString {
