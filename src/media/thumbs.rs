@@ -12,7 +12,7 @@ pub fn load_or_make_thumb(path: &Path) -> Option<Arc<Image>> {
     let cache_path = cache_dir().join(format!("{key:x}.jpg"));
 
     if let Ok(bytes) = fs::read(&cache_path) {
-        if !bytes.is_empty() {
+        if image::load_from_memory(&bytes).is_ok() {
             return Some(Arc::new(Image::from_bytes(ImageFormat::Jpeg, bytes)));
         }
     }
@@ -60,8 +60,13 @@ mod tests {
     #[test]
     fn encodes_png_with_alpha_as_jpeg_thumb() {
         let path = temp_png();
+        let cache = cache_dir().join(format!("{:x}.jpg", cache_key(&path).unwrap()));
+        fs::write(&cache, b"incomplete cached JPEG").unwrap();
         let thumb = load_or_make_thumb(&path);
         assert!(thumb.is_some(), "alpha PNG should still produce a thumb");
+        let decoded = image::open(&cache).expect("corrupt cache must be regenerated");
+        assert_eq!((decoded.width(), decoded.height()), (THUMB_MAX, THUMB_MAX));
+        fs::remove_file(cache).unwrap();
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 }
