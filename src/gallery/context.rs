@@ -13,13 +13,17 @@ impl Gallery {
         let Some(menu) = &self.context else {
             return div().into_any_element();
         };
-        let t = Theme::DARK;
+        let t = Theme::current();
         let index = menu.index;
         let folder = matches!(self.entries.get(index), Some(Entry::Folder(_)));
         let can_dup = matches!(self.entries.get(index), Some(Entry::Media(_)));
+        let starred = matches!(
+            self.entries.get(index),
+            Some(Entry::Media(m)) if self.is_favorite(&m.path)
+        );
         let can_new = folder && !self.prefs.flat_mode;
         let item_h = 28.0;
-        let rows = 10.0 + if can_new { 1.0 } else { 0.0 } + if can_dup { 1.0 } else { 0.0 };
+        let rows = 10.0 + if can_new { 1.0 } else { 0.0 } + if can_dup { 2.0 } else { 0.0 };
         let mw = 196.0;
         let mh = 8.0 + rows * item_h;
         let vw: f32 = window.viewport_size().width.into();
@@ -65,6 +69,18 @@ impl Gallery {
                         s.child(menu_row("Duplicate", cx, move |this, _, window, cx| {
                             this.dismiss_context(cx);
                             this.duplicate_selected(&Duplicate, window, cx);
+                        }))
+                    })
+                    .when(can_dup && starred, |s| {
+                        s.child(menu_row("Unstar", cx, move |this, _, window, cx| {
+                            this.dismiss_context(cx);
+                            this.toggle_star(&super::ToggleStar, window, cx);
+                        }))
+                    })
+                    .when(can_dup && !starred, |s| {
+                        s.child(menu_row("Star", cx, move |this, _, window, cx| {
+                            this.dismiss_context(cx);
+                            this.toggle_star(&super::ToggleStar, window, cx);
                         }))
                     })
                     .child(menu_row("Cut", cx, move |this, _, window, cx| {
@@ -118,7 +134,7 @@ fn menu_row<T: 'static>(
     cx: &Context<T>,
     on_click: impl Fn(&mut T, &gpui::ClickEvent, &mut Window, &mut Context<T>) + 'static,
 ) -> impl IntoElement {
-    let t = Theme::DARK;
+    let t = Theme::current();
     div()
         .id(label)
         .px_3()

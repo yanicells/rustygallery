@@ -14,7 +14,7 @@ pub(super) struct TileDrag {
 
 impl Render for TileDrag {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let t = Theme::DARK;
+        let t = Theme::current();
         let n = self.paths.len();
         let label = if n == 1 {
             self.paths[0]

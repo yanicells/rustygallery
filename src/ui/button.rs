@@ -11,7 +11,7 @@ pub fn btn<T: 'static>(
     on_click: impl Fn(&mut T, &ClickEvent, &mut Window, &mut Context<T>) + 'static,
 ) -> impl IntoElement {
     let id = id.into();
-    let t = Theme::DARK;
+    let t = Theme::current();
     div()
         .id(id)
         .px_3()
@@ -41,7 +41,7 @@ pub fn btn_disabled(
     id: impl Into<SharedString>,
     label: impl Into<SharedString>,
 ) -> impl IntoElement {
-    let t = Theme::DARK;
+    let t = Theme::current();
     div()
         .id(id.into())
         .px_3()

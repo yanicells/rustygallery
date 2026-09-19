@@ -10,6 +10,7 @@ use super::{
 
 impl Render for Gallery {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        Theme::set_current(Theme::resolve(&self.prefs.theme, window.appearance()));
         window.set_window_title(&format!("gallery — {}", self.folder.display()));
 
         let (_, tile) = self.layout(window);
@@ -48,7 +49,13 @@ impl Render for Gallery {
         let recents = self.prefs.recents.clone();
         let saved_list = self.prefs.saved.clone();
         let current_root = self.root.clone();
-        let t = Theme::DARK;
+        let theme_label = match self.prefs.theme.as_str() {
+            "light" => "Light",
+            "system" => "System",
+            _ => "Dark",
+        };
+        let video_inline = self.prefs.video_inline;
+        let t = Theme::current();
 
         let root = div()
             .id("gallery")
@@ -76,6 +83,10 @@ impl Render for Gallery {
             .on_action(cx.listener(Self::filter_all))
             .on_action(cx.listener(Self::filter_images))
             .on_action(cx.listener(Self::filter_videos))
+            .on_action(cx.listener(Self::filter_favorites))
+            .on_action(cx.listener(Self::toggle_star))
+            .on_action(cx.listener(Self::cycle_theme))
+            .on_action(cx.listener(Self::toggle_video_pref))
             .on_action(cx.listener(Self::toggle_search))
             .on_action(cx.listener(Self::reveal_in_finder))
             .on_action(cx.listener(Self::copy_path))
@@ -287,7 +298,7 @@ impl Render for Gallery {
                                                             .text_sm()
                                                             .overflow_hidden()
                                                             .children(crumbs.into_iter().enumerate().flat_map(|(i, (label, path))| {
-                                                                let t = Theme::DARK;
+                                                                let t = Theme::current();
                                                                 let mut bits = Vec::new();
                                                                 if i > 0 {
                                                                     bits.push(
@@ -419,8 +430,50 @@ impl Render for Gallery {
                                                         |this, _, _, cx| {
                                                             this.set_filter(Filter::Videos, cx)
                                                         },
+                                                    ))
+                                                    .child(btn(
+                                                        "f-fav",
+                                                        "Stars",
+                                                        filter == Filter::Favorites,
+                                                        false,
+                                                        cx,
+                                                        |this, _, _, cx| {
+                                                            this.set_filter(Filter::Favorites, cx)
+                                                        },
                                                     )),
                                             )
+                                            .child(btn(
+                                                "theme",
+                                                theme_label,
+                                                false,
+                                                false,
+                                                cx,
+                                                |this, _, window, cx| {
+                                                    this.cycle_theme(
+                                                        &super::CycleTheme,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                },
+                                            ))
+                                            .child(btn(
+                                                "video-pref",
+                                                if video_inline {
+                                                    "Video: stay"
+                                                } else {
+                                                    "Video: system"
+                                                },
+                                                !video_inline,
+                                                false,
+                                                cx,
+                                                |this, _, window, cx| {
+                                                    this.toggle_video_pref(
+                                                        &super::ToggleVideoPref,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                },
+                                            ))
                                             .child(btn(
                                                 "sort",
                                                 format!(
@@ -508,7 +561,7 @@ impl Render for Gallery {
                             .overflow_y_scroll()
                             .p(px(PAD))
                             .when_some(self.drop_hint, |s, hint| {
-                                let t = Theme::DARK;
+                                let t = Theme::current();
                                 let text = match hint {
                                     DropHint::OpenLibrary => "Drop to open this folder",
                                     DropHint::ImportHere => "Drop to add to this folder",

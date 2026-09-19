@@ -2,14 +2,14 @@ use std::path::PathBuf;
 
 use gpui::{div, img, prelude::*, px, relative, rgb, Context, MouseButton, ObjectFit, Window};
 
-use crate::media::{Entry, MediaKind};
+use crate::media::{display_source, first_frame_image, is_animated, Entry, MediaKind};
 use crate::ui::{btn, Theme};
 
 use super::exif::read_exif;
 use super::viewer::ViewMode;
 use super::{
     viewer::ViewerState, CopyPath, Gallery, MoveToTrash, RevealInFinder, RotateLeft, RotateRight,
-    ToggleFullscreen, ToggleSlideshow, ViewActual, ViewFill, ViewFit,
+    ToggleFullscreen, ToggleSlideshow, ToggleStar, ViewActual, ViewFill, ViewFit,
 };
 
 impl Gallery {
@@ -18,9 +18,7 @@ impl Gallery {
             .iter()
             .enumerate()
             .filter_map(|(i, e)| {
-                (self.entry_visible(e)
-                    && matches!(e, Entry::Media(m) if m.kind == MediaKind::Image))
-                .then_some(i)
+                (self.entry_visible(e) && matches!(e, Entry::Media(_))).then_some(i)
             })
             .collect()
     }
@@ -42,12 +40,9 @@ impl Gallery {
             return Vec::new();
         };
         let mut out = Vec::new();
-        for step in [pos.checked_sub(1), Some(pos + 1)] {
-            if let Some(i) = step {
-                if let Some(Entry::Media(item)) = imgs.get(i).and_then(|&idx| self.entries.get(idx))
-                {
-                    out.push(item.path.clone());
-                }
+        for i in [pos.checked_sub(1), Some(pos + 1)].into_iter().flatten() {
+            if let Some(Entry::Media(item)) = imgs.get(i).and_then(|&idx| self.entries.get(idx)) {
+                out.push(item.path.clone());
             }
         }
         out
@@ -62,9 +57,10 @@ impl Gallery {
         let Entry::Media(item) = &self.entries[index] else {
             return div().into_any_element();
         };
-        let t = Theme::DARK;
+        let t = Theme::current();
+        let source = display_source(&item.path);
         if self.viewer.peek {
-            return self.render_peek(item.path.clone(), item.modified, cx);
+            return self.render_peek(source, item.modified, cx);
         }
 
         let zoom = self.viewer.zoom;
@@ -72,17 +68,37 @@ impl Gallery {
         let slideshow = self.slideshow;
         let fullscreen = window.is_fullscreen();
         let mode = self.viewer.mode;
+        let video = item.kind == MediaKind::Video;
+        let animated = !video && is_animated(&item.path);
+        let starred = self.is_favorite(&item.path);
         let meta = format!(
-            "·  {} / {}  ·  {}  ·  {:.0}%{}",
+            "·  {} / {}  ·  {}  ·  {:.0}%{}{}{}",
             index + 1,
             self.entries.len(),
             mode_label(mode),
             zoom * 100.0,
-            if slideshow { "  ·  slideshow" } else { "" }
+            if slideshow { "  ·  slideshow" } else { "" },
+            if video { "  ·  video" } else { "" },
+            if animated {
+                if self.viewer.anim_paused {
+                    "  ·  paused"
+                } else {
+                    "  ·  gif"
+                }
+            } else {
+                ""
+            }
         );
         let neighbors = self.neighbor_paths(index);
         let strip = self.filmstrip_indices(index);
         let exif = self.viewer.exif.then(|| read_exif(&item.path));
+        let hint = if video {
+            "Space play  ·  Play opens the system player  ·  Esc back"
+        } else if animated {
+            "Space pause  ·  I info  ·  Esc back"
+        } else {
+            "I info  ·  [ ] rotate  ·  F11 full  ·  Space next  ·  Esc back"
+        };
 
         div()
             .id("lightbox")
@@ -93,7 +109,9 @@ impl Gallery {
             .flex_col()
             .bg(rgb(t.lightbox))
             .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.stop_propagation()))
-            .child(self.render_lightbox_header(&item.name, &meta, slideshow, fullscreen, mode, cx))
+            .child(self.render_lightbox_header(
+                &item.name, &meta, slideshow, fullscreen, mode, starred, video, cx,
+            ))
             .child(
                 div()
                     .id("lightbox-mid")
@@ -103,18 +121,22 @@ impl Gallery {
                     .flex_row()
                     .min_h_0()
                     .child(self.render_lightbox_body(
+                        source,
                         item.path.clone(),
                         item.modified,
                         zoom,
                         pan,
                         mode,
+                        video,
+                        animated,
+                        animated && self.viewer.anim_paused,
                         cx,
                     ))
                     .when_some(exif, |s, info| s.child(render_exif_panel(&info))),
             )
             .child(self.render_filmstrip(index, &strip, cx))
             .children(neighbors.into_iter().enumerate().map(|(i, path)| {
-                img(path)
+                img(display_source(&path))
                     .id(("prefetch", i))
                     .w(px(0.))
                     .h(px(0.))
@@ -126,13 +148,13 @@ impl Gallery {
                     .py_2()
                     .text_xs()
                     .text_color(rgb(t.text_dim))
-                    .child("I info  ·  [ ] rotate  ·  F11 full  ·  Space next  ·  Esc back"),
+                    .child(hint),
             )
             .into_any_element()
     }
 
     fn render_peek(&self, path: PathBuf, modified: u64, cx: &Context<Self>) -> gpui::AnyElement {
-        let t = Theme::DARK;
+        let t = Theme::current();
         div()
             .id("peek")
             .absolute()
@@ -154,6 +176,7 @@ impl Gallery {
             .into_any_element()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_lightbox_header(
         &self,
         name: &gpui::SharedString,
@@ -161,9 +184,11 @@ impl Gallery {
         slideshow: bool,
         fullscreen: bool,
         mode: ViewMode,
+        starred: bool,
+        video: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let t = Theme::DARK;
+        let t = Theme::current();
         div()
             .flex()
             .items_center()
@@ -204,6 +229,24 @@ impl Gallery {
                 div()
                     .flex()
                     .gap_1()
+                    .child(btn(
+                        "star-btn",
+                        if starred { "★" } else { "☆" },
+                        starred,
+                        false,
+                        cx,
+                        |this, _, window, cx| this.toggle_star(&ToggleStar, window, cx),
+                    ))
+                    .when(video, |s| {
+                        s.child(btn(
+                            "play-btn",
+                            "Play",
+                            false,
+                            false,
+                            cx,
+                            |this, _, window, cx| this.play_in_system(window, cx),
+                        ))
+                    })
                     .child(btn(
                         "fit-btn",
                         "Fit",
@@ -310,33 +353,62 @@ impl Gallery {
             )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_lightbox_body(
         &self,
-        path: PathBuf,
+        source: PathBuf,
+        original: PathBuf,
         modified: u64,
         zoom: f32,
         pan: gpui::Point<gpui::Pixels>,
         mode: ViewMode,
+        video: bool,
+        animated: bool,
+        paused: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let image = match mode {
-            ViewMode::Fit => img(path)
-                .id(("full", modified))
-                .size_full()
-                .object_fit(ObjectFit::Contain)
-                .into_any_element(),
-            ViewMode::Fill => img(path)
-                .id(("full-fill", modified))
-                .size_full()
-                .object_fit(ObjectFit::Cover)
-                .into_any_element(),
-            ViewMode::Actual => {
-                let (w, h) = self.viewer.px.unwrap_or((800, 600));
-                img(path)
-                    .id(("full-actual", modified))
-                    .w(px(w as f32 * zoom))
-                    .h(px(h as f32 * zoom))
-                    .into_any_element()
+        let still = paused.then(|| first_frame_image(&original)).flatten();
+        let image = if let Some(frame) = still {
+            match mode {
+                ViewMode::Fit => img(frame)
+                    .id(("full-pause", modified))
+                    .size_full()
+                    .object_fit(ObjectFit::Contain)
+                    .into_any_element(),
+                ViewMode::Fill => img(frame)
+                    .id(("full-pause-fill", modified))
+                    .size_full()
+                    .object_fit(ObjectFit::Cover)
+                    .into_any_element(),
+                ViewMode::Actual => {
+                    let (w, h) = self.viewer.px.unwrap_or((800, 600));
+                    img(frame)
+                        .id(("full-pause-actual", modified))
+                        .w(px(w as f32 * zoom))
+                        .h(px(h as f32 * zoom))
+                        .into_any_element()
+                }
+            }
+        } else {
+            match mode {
+                ViewMode::Fit => img(source)
+                    .id(("full", modified))
+                    .size_full()
+                    .object_fit(ObjectFit::Contain)
+                    .into_any_element(),
+                ViewMode::Fill => img(source)
+                    .id(("full-fill", modified))
+                    .size_full()
+                    .object_fit(ObjectFit::Cover)
+                    .into_any_element(),
+                ViewMode::Actual => {
+                    let (w, h) = self.viewer.px.unwrap_or((800, 600));
+                    img(source)
+                        .id(("full-actual", modified))
+                        .w(px(w as f32 * zoom))
+                        .h(px(h as f32 * zoom))
+                        .into_any_element()
+                }
             }
         };
         let frame = match mode {
@@ -360,6 +432,43 @@ impl Gallery {
             .on_mouse_move(cx.listener(Self::on_viewer_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_viewer_up))
             .child(frame)
+            .when(animated, |s| {
+                let t = Theme::current();
+                s.child(
+                    div()
+                        .absolute()
+                        .top_3()
+                        .left_3()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .bg(rgb(t.btn_active))
+                        .text_xs()
+                        .text_color(rgb(t.accent_soft))
+                        .child(if paused { "GIF paused" } else { "GIF" }),
+                )
+            })
+            .when(video, |s| {
+                let t = Theme::current();
+                s.child(
+                    div()
+                        .id("video-play")
+                        .absolute()
+                        .bottom_4()
+                        .right_4()
+                        .px_3()
+                        .py_1()
+                        .rounded_md()
+                        .bg(rgb(t.prominent))
+                        .text_color(rgb(t.prominent_text))
+                        .text_sm()
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.play_in_system(window, cx);
+                        }))
+                        .child("Play"),
+                )
+            })
     }
 
     fn render_filmstrip(
@@ -368,7 +477,7 @@ impl Gallery {
         strip: &[usize],
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let t = Theme::DARK;
+        let t = Theme::current();
         div()
             .id("filmstrip")
             .h(px(72.))
@@ -388,11 +497,7 @@ impl Gallery {
                                 .object_fit(ObjectFit::Cover)
                                 .into_any_element()
                         } else {
-                            img(item.path.clone())
-                                .id(("strip-file", item.modified))
-                                .size_full()
-                                .object_fit(ObjectFit::Cover)
-                                .into_any_element()
+                            div().size_full().bg(rgb(t.tile_media)).into_any_element()
                         }
                     }
                     Entry::Folder(_) => div().into_any_element(),
@@ -423,7 +528,7 @@ fn mode_label(mode: ViewMode) -> &'static str {
 }
 
 fn render_exif_panel(info: &super::exif::ExifInfo) -> impl IntoElement {
-    let t = Theme::DARK;
+    let t = Theme::current();
     div()
         .id("exif")
         .w(px(240.))

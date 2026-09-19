@@ -16,6 +16,9 @@ pub struct Prefs {
     pub sort_desc: bool,
     pub window: Option<(f32, f32, f32, f32)>,
     pub ignore: Vec<String>,
+    pub theme: String,
+    pub video_inline: bool,
+    pub favorites: Vec<PathBuf>,
 }
 
 impl Default for Prefs {
@@ -30,6 +33,9 @@ impl Default for Prefs {
             sort_desc: false,
             window: None,
             ignore: default_ignore_list(),
+            theme: "dark".into(),
+            video_inline: true,
+            favorites: Vec::new(),
         }
     }
 }
@@ -74,9 +80,16 @@ impl Prefs {
                             prefs.sort = value.to_string();
                         } else if line == "sort_desc=1" {
                             prefs.sort_desc = true;
+                        } else if let Some(value) = line.strip_prefix("theme=") {
+                            prefs.theme = value.to_string();
+                        } else if line == "video_inline=0" {
+                            prefs.video_inline = false;
+                        } else if line == "video_inline=1" {
+                            prefs.video_inline = true;
                         }
                     }
                 },
+                "[favorites]" => prefs.favorites.push(PathBuf::from(line)),
                 "[ignore]" => {
                     if !saw_ignore {
                         prefs.ignore.clear();
@@ -102,6 +115,7 @@ impl Prefs {
         }
         prefs.recents.retain(|p| p.is_dir());
         prefs.saved.retain(|p| p.is_dir());
+        prefs.favorites.retain(|p| p.is_file());
         if !prefs.recents.is_empty() {
             prefs.seen_open = true;
         }
@@ -135,6 +149,14 @@ impl Prefs {
         if self.sort_desc {
             out.push_str("sort_desc=1\n");
         }
+        out.push_str("theme=");
+        out.push_str(&self.theme);
+        out.push('\n');
+        out.push_str(if self.video_inline {
+            "video_inline=1\n"
+        } else {
+            "video_inline=0\n"
+        });
         if let Some((x, y, w, h)) = self.window {
             out.push_str("\n[window]\n");
             out.push_str(&format!("x={x}\ny={y}\nw={w}\nh={h}\n"));
@@ -152,6 +174,11 @@ impl Prefs {
         out.push_str("\n[ignore]\n");
         for name in &self.ignore {
             out.push_str(name);
+            out.push('\n');
+        }
+        out.push_str("\n[favorites]\n");
+        for p in &self.favorites {
+            out.push_str(&p.to_string_lossy());
             out.push('\n');
         }
         let _ = fs::write(path, out);
@@ -204,6 +231,28 @@ impl Prefs {
         } else {
             self.saved.insert(0, folder.to_path_buf());
         }
+        self.save();
+    }
+
+    pub fn is_favorite(&self, path: &Path) -> bool {
+        self.favorites.iter().any(|p| p == path)
+    }
+
+    pub fn toggle_favorite(&mut self, path: &Path) {
+        if self.is_favorite(path) {
+            self.favorites.retain(|p| p != path);
+        } else {
+            self.favorites.insert(0, path.to_path_buf());
+        }
+        self.save();
+    }
+
+    pub fn cycle_theme(&mut self) {
+        self.theme = match self.theme.as_str() {
+            "dark" => "light".into(),
+            "light" => "system".into(),
+            _ => "dark".into(),
+        };
         self.save();
     }
 }

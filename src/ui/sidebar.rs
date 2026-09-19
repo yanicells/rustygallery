@@ -9,7 +9,7 @@ pub fn sidebar_row<T: 'static>(
     cx: &Context<T>,
     on_click: impl Fn(&mut T, &ClickEvent, &mut Window, &mut Context<T>) + 'static,
 ) -> impl IntoElement {
-    let t = Theme::DARK;
+    let t = Theme::current();
     div()
         .id(id)
         .w_full()

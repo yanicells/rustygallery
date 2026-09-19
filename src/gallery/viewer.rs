@@ -21,6 +21,7 @@ pub(crate) struct ViewerState {
     pub(crate) peek: bool,
     pub(crate) exif: bool,
     pub(crate) px: Option<(u32, u32)>,
+    pub(crate) anim_paused: bool,
 }
 
 impl Default for ViewerState {
@@ -34,6 +35,7 @@ impl Default for ViewerState {
             peek: false,
             exif: false,
             px: None,
+            anim_paused: false,
         }
     }
 }
@@ -43,6 +45,7 @@ impl ViewerState {
         self.zoom = 1.0;
         self.pan = point(px(0.), px(0.));
         self.dragging = false;
+        self.anim_paused = false;
     }
 }
 

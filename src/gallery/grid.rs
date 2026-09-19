@@ -21,13 +21,15 @@ impl Gallery {
         let checked = self.checked.contains(&index);
         let cut = self.is_cut(entry.path());
         let name = entry.name().clone();
-        let t = Theme::DARK;
+        let t = Theme::current();
         let folder_dest = match entry {
             Entry::Folder(folder) => Some(folder.path.clone()),
             Entry::Media(_) => None,
         };
         let drag = self.drag_paths(index);
         let can_drag = !drag.is_empty();
+        let starred = matches!(entry, Entry::Media(m) if self.is_favorite(&m.path));
+        let star_path = matches!(entry, Entry::Media(_)).then(|| entry.path().to_path_buf());
 
         let media = match entry {
             Entry::Folder(folder) => div()
@@ -60,16 +62,33 @@ impl Gallery {
                         .child(format!("{}", folder.media_count)),
                 )
                 .into_any_element(),
-            Entry::Media(item) if item.kind == MediaKind::Video => div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(rgb(t.tile_media))
-                .text_color(rgb(t.btn_text))
-                .text_lg()
-                .child("▶")
-                .into_any_element(),
+            Entry::Media(item) if item.kind == MediaKind::Video => {
+                let poster = self.thumbs.get(&item.path).cloned();
+                div()
+                    .size_full()
+                    .relative()
+                    .bg(rgb(t.tile_media))
+                    .when_some(poster, |s, thumb| {
+                        s.child(
+                            img(thumb)
+                                .id(("vthumb", index))
+                                .size_full()
+                                .object_fit(ObjectFit::Cover),
+                        )
+                    })
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(rgb(t.btn_text))
+                            .text_lg()
+                            .child("▶"),
+                    )
+                    .into_any_element()
+            }
             Entry::Media(item) => {
                 if let Some(thumb) = self.thumbs.get(&item.path).cloned() {
                     img(thumb)
@@ -78,11 +97,7 @@ impl Gallery {
                         .object_fit(ObjectFit::Cover)
                         .into_any_element()
                 } else {
-                    img(item.path.clone())
-                        .id(("file", index))
-                        .size_full()
-                        .object_fit(ObjectFit::Cover)
-                        .into_any_element()
+                    div().size_full().bg(rgb(t.tile_media)).into_any_element()
                 }
             }
         };
@@ -111,6 +126,7 @@ impl Gallery {
                 div()
                     .w(px(tile))
                     .h(px(tile))
+                    .relative()
                     .overflow_hidden()
                     .rounded_md()
                     .bg(rgb(t.tile))
@@ -121,11 +137,11 @@ impl Gallery {
                     .when_some(folder_dest.clone(), |s, dest| {
                         let dest_tiles = dest.clone();
                         s.drag_over::<TileDrag>(|s, _, _, _| {
-                            let t = Theme::DARK;
+                            let t = Theme::current();
                             s.border_color(rgb(t.accent)).border_4()
                         })
                         .drag_over::<ExternalPaths>(|s, _, _, _| {
-                            let t = Theme::DARK;
+                            let t = Theme::current();
                             s.border_color(rgb(t.accent)).border_4()
                         })
                         .on_drop(cx.listener(move |this, drag: &TileDrag, window, cx| {
@@ -137,7 +153,31 @@ impl Gallery {
                             },
                         ))
                     })
-                    .child(media),
+                    .child(media)
+                    .when_some(star_path, |s, path| {
+                        s.child(
+                            div()
+                                .id(("star", index))
+                                .absolute()
+                                .top_1()
+                                .left_1()
+                                .px_1()
+                                .rounded_md()
+                                .bg(rgb(t.btn_active))
+                                .text_xs()
+                                .text_color(if starred {
+                                    rgb(t.accent)
+                                } else {
+                                    rgb(t.text_hint)
+                                })
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.star_path(path.clone(), cx);
+                                    cx.stop_propagation();
+                                }))
+                                .child(if starred { "★" } else { "☆" }),
+                        )
+                    }),
             )
             .child(
                 div()

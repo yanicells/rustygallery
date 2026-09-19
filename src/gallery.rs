@@ -43,6 +43,7 @@ pub(crate) enum Filter {
     All,
     Images,
     Videos,
+    Favorites,
 }
 
 actions!(
@@ -94,6 +95,10 @@ actions!(
         ViewFit,
         ViewFill,
         ViewActual,
+        ToggleStar,
+        FilterFavorites,
+        CycleTheme,
+        ToggleVideoPref,
     ]
 );
 
@@ -151,6 +156,7 @@ pub struct Gallery {
     watch_stamp: Option<u64>,
     drop_hint: Option<DropHint>,
     _bounds: Option<Subscription>,
+    _appearance: Option<Subscription>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -208,9 +214,13 @@ impl Gallery {
             watch_stamp: None,
             drop_hint: None,
             _bounds: None,
+            _appearance: None,
         };
         gallery._bounds = Some(cx.observe_window_bounds(window, |this, window, _cx| {
             this.persist_window(window);
+        }));
+        gallery._appearance = Some(cx.observe_window_appearance(window, |_, _, cx| {
+            cx.notify();
         }));
         if std::env::args().nth(1).is_some() {
             gallery.prefs.mark_opened();
@@ -342,7 +352,7 @@ impl Gallery {
             .entries
             .iter()
             .filter_map(|e| match e {
-                Entry::Media(m) if m.kind == MediaKind::Image => Some(m.path.clone()),
+                Entry::Media(m) => Some(m.path.clone()),
                 _ => None,
             })
             .collect();
@@ -438,10 +448,18 @@ impl Gallery {
                     cx.notify();
                 }
                 MediaKind::Video => {
-                    self.selected = None;
-                    self.stop_slideshow();
-                    cx.open_with_system(&item.path);
-                    cx.notify();
+                    if self.prefs.video_inline {
+                        self.selected = Some(index);
+                        self.viewer.peek = false;
+                        self.viewer.reset_view();
+                        self.viewer.px = None;
+                        cx.notify();
+                    } else {
+                        self.selected = None;
+                        self.stop_slideshow();
+                        cx.open_with_system(&item.path);
+                        cx.notify();
+                    }
                 }
             },
         }
@@ -553,14 +571,23 @@ impl Gallery {
         self.move_focus(cols, false, cx);
     }
 
-    fn next_item(&mut self, _: &NextItem, _: &mut Window, cx: &mut Context<Self>) {
+    fn next_item(&mut self, _: &NextItem, window: &mut Window, cx: &mut Context<Self>) {
         if self.viewer.peek {
             self.selected = None;
             self.viewer = ViewerState::default();
             cx.notify();
             return;
         }
-        if self.selected.is_some() {
+        if let Some(i) = self.selected {
+            if self.is_animated_at(i) {
+                self.viewer.anim_paused = !self.viewer.anim_paused;
+                cx.notify();
+                return;
+            }
+            if self.is_video_at(i) {
+                self.play_in_system(window, cx);
+                return;
+            }
             self.step_image(1, cx);
         } else if let Some(i) = self.focused {
             self.open_peek(i, cx);
@@ -585,15 +612,19 @@ impl Gallery {
         let mut i = start.rem_euclid(len);
         for _ in 0..self.entries.len() {
             let idx = i as usize;
-            if matches!(&self.entries[idx], Entry::Media(m) if m.kind == MediaKind::Image)
+            if matches!(&self.entries[idx], Entry::Media(_))
                 && self.entry_visible(&self.entries[idx])
             {
                 self.selected = Some(idx);
                 self.focused = Some(idx);
                 self.viewer.reset_view();
-                if let Entry::Media(item) = &self.entries[idx] {
-                    self.viewer.px = image::image_dimensions(&item.path).ok();
-                }
+                self.viewer.anim_paused = false;
+                self.viewer.px = match &self.entries[idx] {
+                    Entry::Media(item) if item.kind == MediaKind::Image => {
+                        image::image_dimensions(&item.path).ok()
+                    }
+                    _ => None,
+                };
                 cx.notify();
                 return;
             }
@@ -709,18 +740,19 @@ impl Gallery {
     }
 
     pub(super) fn jump_to_image(&mut self, index: usize, cx: &mut Context<Self>) {
-        if !matches!(
-            self.entries.get(index),
-            Some(Entry::Media(m)) if m.kind == MediaKind::Image
-        ) {
+        if !matches!(self.entries.get(index), Some(Entry::Media(_))) {
             return;
         }
         self.selected = Some(index);
         self.focused = Some(index);
         self.viewer.reset_view();
-        if let Some(Entry::Media(item)) = self.entries.get(index) {
-            self.viewer.px = image::image_dimensions(&item.path).ok();
-        }
+        self.viewer.anim_paused = false;
+        self.viewer.px = match self.entries.get(index) {
+            Some(Entry::Media(item)) if item.kind == MediaKind::Image => {
+                image::image_dimensions(&item.path).ok()
+            }
+            _ => None,
+        };
         cx.notify();
     }
 
@@ -803,6 +835,9 @@ impl Gallery {
             Filter::All => true,
             Filter::Images => matches!(entry, Entry::Media(m) if m.kind == MediaKind::Image),
             Filter::Videos => matches!(entry, Entry::Media(m) if m.kind == MediaKind::Video),
+            Filter::Favorites => {
+                matches!(entry, Entry::Media(m) if self.prefs.is_favorite(&m.path))
+            }
         }
     }
 
@@ -853,6 +888,74 @@ impl Gallery {
     }
     fn filter_videos(&mut self, _: &FilterVideos, _: &mut Window, cx: &mut Context<Self>) {
         self.set_filter(Filter::Videos, cx);
+    }
+    fn filter_favorites(&mut self, _: &FilterFavorites, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_filter(Filter::Favorites, cx);
+    }
+
+    fn is_animated_at(&self, index: usize) -> bool {
+        matches!(
+            self.entries.get(index),
+            Some(Entry::Media(m)) if m.kind == MediaKind::Image && crate::media::is_animated(&m.path)
+        )
+    }
+
+    fn is_video_at(&self, index: usize) -> bool {
+        matches!(
+            self.entries.get(index),
+            Some(Entry::Media(m)) if m.kind == MediaKind::Video
+        )
+    }
+
+    pub(super) fn play_in_system(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.selected.and_then(|i| match self.entries.get(i) {
+            Some(Entry::Media(m)) if m.kind == MediaKind::Video => Some(m.path.clone()),
+            _ => None,
+        }) else {
+            return;
+        };
+        cx.open_with_system(&path);
+    }
+
+    pub(super) fn is_favorite(&self, path: &std::path::Path) -> bool {
+        self.prefs.is_favorite(path)
+    }
+
+    pub(super) fn toggle_star(&mut self, _: &ToggleStar, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self
+            .selected
+            .or(self.focused)
+            .and_then(|i| self.entries.get(i))
+            .map(|e| e.path().to_path_buf())
+        else {
+            return;
+        };
+        if path.is_dir() {
+            return;
+        }
+        self.prefs.toggle_favorite(&path);
+        cx.notify();
+    }
+
+    pub(super) fn star_path(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
+        self.prefs.toggle_favorite(&path);
+        cx.notify();
+    }
+
+    pub(super) fn cycle_theme(&mut self, _: &CycleTheme, _: &mut Window, cx: &mut Context<Self>) {
+        self.prefs.cycle_theme();
+        cx.notify();
+    }
+
+    pub(super) fn toggle_video_pref(
+        &mut self,
+        _: &ToggleVideoPref,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.prefs.video_inline = !self.prefs.video_inline;
+        self.prefs.save();
+        cx.notify();
     }
 
     fn cycle_sort(&mut self, _: &CycleSort, _: &mut Window, cx: &mut Context<Self>) {
@@ -1055,7 +1158,7 @@ impl Gallery {
         let total = self
             .entries
             .iter()
-            .filter(|e| matches!(e, Entry::Media(m) if m.kind == MediaKind::Image))
+            .filter(|e| matches!(e, Entry::Media(_)))
             .count();
         if total == 0 {
             return None;

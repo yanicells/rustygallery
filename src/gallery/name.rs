@@ -6,7 +6,7 @@ use super::{CloseName, ConfirmName, Gallery, NameKind};
 
 impl Gallery {
     pub(super) fn render_name(&self, cx: &Context<Self>) -> impl IntoElement {
-        let t = Theme::DARK;
+        let t = Theme::current();
         let title = match &self.name_kind {
             Some(NameKind::Rename(_)) => "Rename",
             _ => "New folder",
