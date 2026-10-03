@@ -130,6 +130,24 @@ struct TileMenu {
     pos: Point<Pixels>,
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum ReloadOpen {
+    #[default]
+    FocusOnly,
+    RestoreViewer,
+    Explicit,
+}
+
+impl ReloadOpen {
+    fn allows(self, kind: MediaKind, video_inline: bool) -> bool {
+        match self {
+            Self::FocusOnly => false,
+            Self::RestoreViewer => video::opens_inline(kind, video_inline),
+            Self::Explicit => true,
+        }
+    }
+}
+
 pub struct Gallery {
     root: PathBuf,
     folder: PathBuf,
@@ -169,7 +187,7 @@ pub struct Gallery {
     name_error: Option<String>,
     context: Option<TileMenu>,
     reload_focus: Option<PathBuf>,
-    reload_open: bool,
+    reload_open: ReloadOpen,
     clip: Option<Clip>,
     toast: Option<Toast>,
     toast_gen: u64,
@@ -239,7 +257,7 @@ impl Gallery {
             name_error: None,
             context: None,
             reload_focus: None,
-            reload_open: false,
+            reload_open: ReloadOpen::FocusOnly,
             clip: None,
             toast: None,
             toast_gen: 0,
@@ -314,7 +332,7 @@ impl Gallery {
 
     fn begin_load(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
         self.reload_focus = None;
-        self.reload_open = false;
+        self.reload_open = ReloadOpen::FocusOnly;
         if matches!(self.clip, Some(Clip::Cut(_))) {
             self.clip = None;
         }
@@ -329,7 +347,11 @@ impl Gallery {
         cx: &mut Context<Self>,
     ) {
         self.reload_focus = Some(focus);
-        self.reload_open = open;
+        self.reload_open = if open {
+            ReloadOpen::RestoreViewer
+        } else {
+            ReloadOpen::FocusOnly
+        };
         self.load_folder(folder, cx);
     }
 
@@ -386,14 +408,16 @@ impl Gallery {
                     if let Some(i) = this.focused {
                         this.checked.insert(i);
                         this.anchor = Some(i);
-                        if reopen
-                            && matches!(
-                                &this.entries[i],
-                                Entry::Media(m) if video::opens_inline(m.kind, this.prefs.video_inline)
-                            )
-                        {
-                            this.selected = Some(i);
-                            this.prepare_preview(cx);
+                        if matches!(
+                            &this.entries[i],
+                            Entry::Media(m) if reopen.allows(m.kind, this.prefs.video_inline)
+                        ) {
+                            if reopen == ReloadOpen::Explicit {
+                                this.open_entry(i, cx);
+                            } else {
+                                this.selected = Some(i);
+                                this.prepare_preview(cx);
+                            }
                         }
                     } else if !this.entries.is_empty() {
                         this.focused = Some(0);
@@ -986,7 +1010,7 @@ impl Gallery {
         self.root = parent.clone();
         self.prefs.touch_recent(&parent);
         self.reload_focus = Some(path);
-        self.reload_open = true;
+        self.reload_open = ReloadOpen::Explicit;
         self.load_folder(parent, cx);
     }
 
@@ -1493,7 +1517,22 @@ fn range_select(visible: &[usize], anchor: usize, to: usize) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::range_select;
+    use super::{range_select, ReloadOpen};
+    use crate::media::MediaKind;
+
+    #[test]
+    fn only_explicit_reloads_open_videos_with_the_system_preference() {
+        assert!(ReloadOpen::Explicit.allows(MediaKind::Video, false));
+        assert!(!ReloadOpen::RestoreViewer.allows(MediaKind::Video, false));
+        assert!(ReloadOpen::RestoreViewer.allows(MediaKind::Video, true));
+        for video_inline in [false, true] {
+            assert!(ReloadOpen::Explicit.allows(MediaKind::Video, video_inline));
+            assert!(ReloadOpen::Explicit.allows(MediaKind::Image, video_inline));
+            assert!(ReloadOpen::RestoreViewer.allows(MediaKind::Image, video_inline));
+            assert!(!ReloadOpen::FocusOnly.allows(MediaKind::Video, video_inline));
+            assert!(!ReloadOpen::FocusOnly.allows(MediaKind::Image, video_inline));
+        }
+    }
 
     #[test]
     fn shift_range_follows_visible_order() {

@@ -46,7 +46,7 @@ impl Gallery {
         } else if player.is_none() {
             "Paused. Press Play to reopen this video."
         } else {
-            "Preparing video frame…"
+            "No video image at this position."
         };
         let strip = self.filmstrip_indices(index);
 
@@ -186,8 +186,8 @@ impl Gallery {
         let duration = snapshot
             .and_then(|s| s.duration)
             .filter(|d| d.is_finite() && *d > 0.0);
-        let volume = snapshot.map_or(self.video.volume, |s| s.volume);
-        let muted = snapshot.map_or(self.video.muted, |s| s.muted);
+        let volume = self.video.volume;
+        let muted = self.video.muted;
         let playing = matches!(state, Some(PlaybackState::Playing | PlaybackState::Waiting))
             || (matches!(state, Some(PlaybackState::Loading)) && self.video.play_requested);
         let play_label = if failed {

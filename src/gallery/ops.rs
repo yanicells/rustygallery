@@ -4,7 +4,7 @@ use gpui::{Context, PromptLevel, Window};
 
 use crate::media::{
     copy_into, count_tree, duplicate, import_into, move_into, rename_with, restore_path,
-    trash_path, under_root, Collision, Entry, FsError, MediaKind,
+    trash_path, under_root, Collision, Entry, FsError,
 };
 
 use super::Gallery;
@@ -449,13 +449,12 @@ impl Gallery {
         self.dispose_video();
         let next = self.neighbor_path(&paths);
         let mut folder = self.folder.clone();
-        let mut reopen = self.selected.is_some()
-            && next.as_ref().is_some_and(|p| {
-                matches!(
-                    self.entries.iter().find(|e| e.path() == p),
-                    Some(Entry::Media(m)) if m.kind == MediaKind::Image
-                )
-            });
+        let mut reopen = self.selected.is_some() && next.as_ref().is_some_and(|p| {
+            matches!(
+                self.entries.iter().find(|e| e.path() == p),
+                Some(Entry::Media(m)) if super::video::opens_inline(m.kind, self.prefs.video_inline)
+            )
+        });
         let mut done = Vec::new();
         for path in &paths {
             if folder == *path || folder.starts_with(path) {

@@ -37,6 +37,7 @@ pub(super) struct VideoViewState {
     player: Option<VideoPlayer>,
     error: Option<String>,
     tick: Option<Task<()>>,
+    // User audio settings survive native failures and disposal.
     volume: f32,
     muted: bool,
     play_requested: bool,
@@ -86,8 +87,6 @@ impl Gallery {
         self.video.generation += 1;
         self.video.tick.take();
         if let Some(mut player) = self.video.player.take() {
-            self.video.volume = player.snapshot().volume;
-            self.video.muted = player.snapshot().muted;
             player.pause();
             player.dispose();
         }
@@ -239,30 +238,31 @@ impl Gallery {
             return;
         }
         self.video.volume = volume.clamp(0.0, 1.0);
-        if let Some(player) = self.video.player.as_mut() {
+        if let Some(player) = self
+            .video
+            .player
+            .as_mut()
+            .filter(|player| player.snapshot().state != PlaybackState::Failed)
+        {
             player.set_volume(self.video.volume);
         }
         cx.notify();
     }
 
     pub(super) fn change_video_volume(&mut self, delta: f32, cx: &mut Context<Self>) {
-        let volume = self
-            .video
-            .player
-            .as_ref()
-            .map_or(self.video.volume, |player| player.snapshot().volume);
-        self.set_video_volume(volume + delta, cx);
+        self.set_video_volume(self.video.volume + delta, cx);
     }
 
     fn toggle_video_mute(&mut self, cx: &mut Context<Self>) {
         if self.player_shortcuts_blocked() || self.selected_video_path().is_none() {
             return;
         }
-        if let Some(player) = self.video.player.as_mut() {
+        self.video.muted = !self.video.muted;
+        if let Some(player) = self.video.player.as_mut().filter(|player| {
+            player.snapshot().state != PlaybackState::Failed
+                && player.snapshot().muted != self.video.muted
+        }) {
             player.toggle_mute();
-            self.video.muted = player.snapshot().muted;
-        } else {
-            self.video.muted = !self.video.muted;
         }
         cx.notify();
     }

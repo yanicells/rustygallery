@@ -467,7 +467,7 @@ impl Render for Gallery {
                                             .child(btn(
                                                 "video-pref",
                                                 if video_inline {
-                                                    "Video: stay"
+                                                    "Video: built-in"
                                                 } else {
                                                     "Video: system"
                                                 },

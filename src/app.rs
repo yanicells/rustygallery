@@ -120,7 +120,7 @@ pub fn start(folder: PathBuf, cx: &mut App) {
                 MenuItem::action("Stars", FilterFavorites),
                 MenuItem::separator(),
                 MenuItem::action("Cycle Theme", CycleTheme),
-                MenuItem::action("Video: stay / system", ToggleVideoPref),
+                MenuItem::action("Video: built-in / system", ToggleVideoPref),
                 MenuItem::separator(),
                 MenuItem::action("Cycle Sort", CycleSort),
                 MenuItem::action("Sort Direction", ToggleSortDir),
