@@ -4,6 +4,7 @@ mod preview;
 mod scan;
 mod thumbs;
 mod types;
+pub(crate) mod video;
 
 pub(crate) use fs::{
     copy_into, count_tree, create_folder, duplicate, import_into, move_into, rename_with,
@@ -15,5 +16,5 @@ pub use preview::{is_animated, preview_jpeg};
 pub(crate) use scan::stamp_entries;
 pub use scan::{listing_stamp, scan_browse, scan_folder_recursive};
 pub use thumbs::{first_frame_image, load_or_make_thumb};
-pub(crate) use types::is_media_path;
+pub(crate) use types::{is_media_path, MediaItem};
 pub use types::{Entry, MediaKind};
