@@ -22,14 +22,33 @@ mod tray;
 pub fn resolve_folder() -> PathBuf {
     if let Some(arg) = std::env::args().nth(1) {
         let path = PathBuf::from(arg);
-        return path.canonicalize().unwrap_or(path);
+        if path.is_dir() {
+            return path.canonicalize().unwrap_or(path);
+        }
     }
     let prefs = Prefs::load();
-    if let Some(recent) = prefs.recents.first() {
-        return recent.clone();
+    if let Some(folder) = prefs
+        .recents
+        .iter()
+        .chain(&prefs.saved)
+        .find(|p| p.is_dir())
+    {
+        return folder.clone();
     }
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("media");
-    path.canonicalize().unwrap_or(path)
+    let media = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("media");
+    if media.is_dir() {
+        return media.canonicalize().unwrap_or(media);
+    }
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        let pictures = home.join("Pictures");
+        if pictures.is_dir() {
+            return pictures;
+        }
+        if home.is_dir() {
+            return home;
+        }
+    }
+    std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir())
 }
 
 pub fn start(folder: PathBuf, cx: &mut App) {

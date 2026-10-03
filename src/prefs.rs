@@ -51,7 +51,7 @@ impl Prefs {
         std::env::temp_dir().join("rusty-gallery")
     }
 
-    fn path() -> PathBuf {
+    pub(crate) fn path() -> PathBuf {
         Self::support_dir().join("prefs.txt")
     }
 
@@ -59,6 +59,10 @@ impl Prefs {
         let Ok(text) = fs::read_to_string(Self::path()) else {
             return Self::default();
         };
+        Self::parse(&text)
+    }
+
+    fn parse(text: &str) -> Self {
         let mut prefs = Self::default();
         let mut section = "";
         let mut saw_ignore = false;
@@ -122,9 +126,6 @@ impl Prefs {
                 _ => {}
             }
         }
-        prefs.recents.retain(|p| p.is_dir());
-        prefs.saved.retain(|p| p.is_dir());
-        prefs.favorites.retain(|p| p.is_file());
         if !prefs.recents.is_empty() {
             prefs.seen_open = true;
         }
@@ -139,6 +140,10 @@ impl Prefs {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
+        let _ = fs::write(path, self.serialize());
+    }
+
+    fn serialize(&self) -> String {
         let mut out = String::new();
         out.push_str("[flags]\n");
         out.push_str(if self.flat_mode {
@@ -190,7 +195,7 @@ impl Prefs {
             out.push_str(&p.to_string_lossy());
             out.push('\n');
         }
-        let _ = fs::write(path, out);
+        out
     }
 
     pub fn touch_recent(&mut self, folder: &Path) {
@@ -271,6 +276,21 @@ mod tests {
     use super::Prefs;
 
     #[test]
+    fn unavailable_paths_survive_preference_changes() {
+        let text = "[recents]\n/Volumes/Disconnected/photos\n[saved]\n/Volumes/Disconnected/library\n[favorites]\n/Volumes/Disconnected/photo.jpg\n";
+        let mut prefs = Prefs::parse(text);
+        assert_eq!(prefs.recents.len(), 1);
+        assert_eq!(prefs.saved.len(), 1);
+        assert_eq!(prefs.favorites.len(), 1);
+        prefs.theme = "light".into();
+        let restored = Prefs::parse(&prefs.serialize());
+        assert_eq!(restored.recents, prefs.recents);
+        assert_eq!(restored.saved, prefs.saved);
+        assert_eq!(restored.favorites, prefs.favorites);
+        assert_eq!(restored.theme, "light");
+    }
+
+    #[test]
     fn rejects_tiny_or_invalid_window() {
         assert!(Prefs::valid_window(10.0, 10.0, 100.0, 100.0).is_none());
         assert!(Prefs::valid_window(f32::NAN, 10.0, 800.0, 600.0).is_none());
@@ -280,4 +300,3 @@ mod tests {
         );
     }
 }
-

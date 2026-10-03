@@ -4,7 +4,7 @@ On first launch the app writes:
 
 `~/Library/Application Support/rusty-gallery/keys.txt`
 
-Edit that file and save. Bindings reload within about a second. A broken file is ignored and the last good map stays.
+Edit that file and save. Bindings reload within about a second. A broken file is ignored and the last good map stays. If the file is invalid at startup, built-in defaults are used until you fix it.
 
 ## Format
 

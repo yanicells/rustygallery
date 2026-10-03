@@ -1,6 +1,6 @@
 use std::{fs, time::SystemTime};
 
-use gpui::{App, KeyBinding};
+use gpui::{Action, App, DummyKeyboardMapper, KeyBinding, KeyBindingContextPredicate};
 
 use crate::gallery::{
     About, CloseName, CloseSearch, CloseViewer, ConfirmName, ConfirmSearch, CopyPath,
@@ -69,10 +69,10 @@ pub fn path() -> std::path::PathBuf {
 
 pub fn install(cx: &mut App) {
     ensure_file();
-    if let Ok(bindings) = load() {
-        cx.clear_key_bindings();
-        cx.bind_keys(bindings);
-    }
+    let bindings =
+        load().unwrap_or_else(|()| parse(DEFAULT_KEYS).expect("built-in keymap must be valid"));
+    cx.clear_key_bindings();
+    cx.bind_keys(bindings);
 }
 
 pub fn watch(cx: &App) {
@@ -145,59 +145,65 @@ fn parse(text: &str) -> Result<Vec<KeyBinding>, ()> {
 }
 
 fn binding(keys: &str, context: Option<&str>, action: &str) -> Option<KeyBinding> {
-    Some(match action {
-        "Quit" => KeyBinding::new(keys, Quit, context),
-        "OpenFolder" => KeyBinding::new(keys, OpenFolder, context),
-        "GoUp" => KeyBinding::new(keys, GoUp, context),
-        "CloseViewer" => KeyBinding::new(keys, CloseViewer, context),
-        "MoveRight" => KeyBinding::new(keys, MoveRight, context),
-        "MoveLeft" => KeyBinding::new(keys, MoveLeft, context),
-        "MoveUp" => KeyBinding::new(keys, MoveUp, context),
-        "MoveDown" => KeyBinding::new(keys, MoveDown, context),
-        "OpenFocused" => KeyBinding::new(keys, OpenFocused, context),
-        "NextItem" => KeyBinding::new(keys, NextItem, context),
-        "DensitySmall" => KeyBinding::new(keys, DensitySmall, context),
-        "DensityMedium" => KeyBinding::new(keys, DensityMedium, context),
-        "DensityLarge" => KeyBinding::new(keys, DensityLarge, context),
-        "ToggleSlideshow" => KeyBinding::new(keys, ToggleSlideshow, context),
-        "ToggleFlat" => KeyBinding::new(keys, ToggleFlat, context),
-        "ResetZoom" => KeyBinding::new(keys, ResetZoom, context),
-        "ToggleSearch" => KeyBinding::new(keys, ToggleSearch, context),
-        "FilterAll" => KeyBinding::new(keys, FilterAll, context),
-        "FilterImages" => KeyBinding::new(keys, FilterImages, context),
-        "FilterVideos" => KeyBinding::new(keys, FilterVideos, context),
-        "FilterFavorites" => KeyBinding::new(keys, FilterFavorites, context),
-        "ToggleStar" => KeyBinding::new(keys, ToggleStar, context),
-        "CycleTheme" => KeyBinding::new(keys, CycleTheme, context),
-        "ToggleVideoPref" => KeyBinding::new(keys, ToggleVideoPref, context),
-        "CloseSearch" => KeyBinding::new(keys, CloseSearch, context),
-        "ConfirmSearch" => KeyBinding::new(keys, ConfirmSearch, context),
-        "RevealInFinder" => KeyBinding::new(keys, RevealInFinder, context),
-        "CopyPath" => KeyBinding::new(keys, CopyPath, context),
-        "NewFolder" => KeyBinding::new(keys, NewFolder, context),
-        "RenameFocused" => KeyBinding::new(keys, RenameFocused, context),
-        "CloseName" => KeyBinding::new(keys, CloseName, context),
-        "ConfirmName" => KeyBinding::new(keys, ConfirmName, context),
-        "Duplicate" => KeyBinding::new(keys, Duplicate, context),
-        "CutSelection" => KeyBinding::new(keys, CutSelection, context),
-        "CopySelection" => KeyBinding::new(keys, CopySelection, context),
-        "PasteSelection" => KeyBinding::new(keys, PasteSelection, context),
-        "Undo" => KeyBinding::new(keys, Undo, context),
-        "MoveToTrash" => KeyBinding::new(keys, MoveToTrash, context),
-        "ToggleFullscreen" => KeyBinding::new(keys, ToggleFullscreen, context),
-        "RotateLeft" => KeyBinding::new(keys, RotateLeft, context),
-        "RotateRight" => KeyBinding::new(keys, RotateRight, context),
-        "ToggleSaved" => KeyBinding::new(keys, ToggleSaved, context),
-        "CycleSort" => KeyBinding::new(keys, CycleSort, context),
-        "ToggleSortDir" => KeyBinding::new(keys, ToggleSortDir, context),
-        "MoveTo" => KeyBinding::new(keys, MoveTo, context),
-        "CopyTo" => KeyBinding::new(keys, CopyTo, context),
-        "ViewFit" => KeyBinding::new(keys, ViewFit, context),
-        "ViewFill" => KeyBinding::new(keys, ViewFill, context),
-        "ViewActual" => KeyBinding::new(keys, ViewActual, context),
-        "About" => KeyBinding::new(keys, About, context),
+    let action: Box<dyn Action> = match action {
+        "Quit" => Box::new(Quit),
+        "OpenFolder" => Box::new(OpenFolder),
+        "GoUp" => Box::new(GoUp),
+        "CloseViewer" => Box::new(CloseViewer),
+        "MoveRight" => Box::new(MoveRight),
+        "MoveLeft" => Box::new(MoveLeft),
+        "MoveUp" => Box::new(MoveUp),
+        "MoveDown" => Box::new(MoveDown),
+        "OpenFocused" => Box::new(OpenFocused),
+        "NextItem" => Box::new(NextItem),
+        "DensitySmall" => Box::new(DensitySmall),
+        "DensityMedium" => Box::new(DensityMedium),
+        "DensityLarge" => Box::new(DensityLarge),
+        "ToggleSlideshow" => Box::new(ToggleSlideshow),
+        "ToggleFlat" => Box::new(ToggleFlat),
+        "ResetZoom" => Box::new(ResetZoom),
+        "ToggleSearch" => Box::new(ToggleSearch),
+        "FilterAll" => Box::new(FilterAll),
+        "FilterImages" => Box::new(FilterImages),
+        "FilterVideos" => Box::new(FilterVideos),
+        "FilterFavorites" => Box::new(FilterFavorites),
+        "ToggleStar" => Box::new(ToggleStar),
+        "CycleTheme" => Box::new(CycleTheme),
+        "ToggleVideoPref" => Box::new(ToggleVideoPref),
+        "CloseSearch" => Box::new(CloseSearch),
+        "ConfirmSearch" => Box::new(ConfirmSearch),
+        "RevealInFinder" => Box::new(RevealInFinder),
+        "CopyPath" => Box::new(CopyPath),
+        "NewFolder" => Box::new(NewFolder),
+        "RenameFocused" => Box::new(RenameFocused),
+        "CloseName" => Box::new(CloseName),
+        "ConfirmName" => Box::new(ConfirmName),
+        "Duplicate" => Box::new(Duplicate),
+        "CutSelection" => Box::new(CutSelection),
+        "CopySelection" => Box::new(CopySelection),
+        "PasteSelection" => Box::new(PasteSelection),
+        "Undo" => Box::new(Undo),
+        "MoveToTrash" => Box::new(MoveToTrash),
+        "ToggleFullscreen" => Box::new(ToggleFullscreen),
+        "RotateLeft" => Box::new(RotateLeft),
+        "RotateRight" => Box::new(RotateRight),
+        "ToggleSaved" => Box::new(ToggleSaved),
+        "CycleSort" => Box::new(CycleSort),
+        "ToggleSortDir" => Box::new(ToggleSortDir),
+        "MoveTo" => Box::new(MoveTo),
+        "CopyTo" => Box::new(CopyTo),
+        "ViewFit" => Box::new(ViewFit),
+        "ViewFill" => Box::new(ViewFill),
+        "ViewActual" => Box::new(ViewActual),
+        "About" => Box::new(About),
         _ => return None,
-    })
+    };
+    let predicate = context
+        .map(KeyBindingContextPredicate::parse)
+        .transpose()
+        .ok()?
+        .map(Into::into);
+    KeyBinding::load(keys, action, predicate, false, None, &DummyKeyboardMapper).ok()
 }
 
 #[cfg(test)]
@@ -207,6 +213,19 @@ mod tests {
     #[test]
     fn default_file_parses() {
         assert!(parse(DEFAULT_KEYS).is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_keystroke_and_context() {
+        assert!(parse("command-q Gallery Quit\n").is_err());
+        assert!(parse("cmd-q ( Quit\n").is_err());
+    }
+
+    #[test]
+    fn rejects_empty_or_incomplete_maps() {
+        assert!(parse("# only a comment\n").is_err());
+        assert!(parse("cmd-q *\n").is_err());
+        assert!(parse("cmd-q * Quit extra\n").is_err());
     }
 
     #[test]
