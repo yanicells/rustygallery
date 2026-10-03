@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  linux:
+    name: linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: system libs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libasound2-dev libvulkan-dev pkg-config cmake clang
+      - name: test
+        run: cargo test --locked --bin gallery
+      - name: build
+        run: cargo build --release --locked --bin gallery
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gallery-linux
+          path: target/release/gallery
+
+  windows:
+    name: windows
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: test
+        run: cargo test --locked --bin gallery
+      - name: build
+        run: cargo build --release --locked --bin gallery
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: gallery-windows
+          path: target/release/gallery.exe

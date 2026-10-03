@@ -17,6 +17,7 @@ use crate::media::{
 use crate::prefs::Prefs;
 use crate::ui::SIDEBAR_W;
 
+mod about;
 mod collision;
 mod context;
 mod density;
@@ -100,6 +101,7 @@ actions!(
         FilterFavorites,
         CycleTheme,
         ToggleVideoPref,
+        About,
     ]
 );
 
@@ -158,6 +160,7 @@ pub struct Gallery {
     collision: Option<CollisionAsk>,
     watch_stamp: Option<u64>,
     drop_hint: Option<DropHint>,
+    about_open: bool,
     _bounds: Option<Subscription>,
     _appearance: Option<Subscription>,
 }
@@ -218,6 +221,7 @@ impl Gallery {
             collision: None,
             watch_stamp: None,
             drop_hint: None,
+            about_open: false,
             _bounds: None,
             _appearance: None,
         };
@@ -478,6 +482,10 @@ impl Gallery {
     }
 
     fn close_viewer(&mut self, _: &CloseViewer, window: &mut Window, cx: &mut Context<Self>) {
+        if self.about_open {
+            self.close_about(cx);
+            return;
+        }
         if self.context.take().is_some() {
             cx.notify();
             return;
@@ -643,7 +651,7 @@ impl Gallery {
         self.pick_folder(cx);
     }
 
-    fn pick_folder(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn pick_folder(&mut self, cx: &mut Context<Self>) {
         let rx = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -907,6 +915,21 @@ impl Gallery {
             self.entries.get(index),
             Some(Entry::Media(m)) if m.kind == MediaKind::Video
         )
+    }
+
+    pub(crate) fn tray_open_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if path.is_dir() {
+            self.open_library(path, true, cx);
+            return;
+        }
+        let Some(parent) = path.parent().map(|p| p.to_path_buf()) else {
+            return;
+        };
+        self.root = parent.clone();
+        self.prefs.touch_recent(&parent);
+        self.reload_focus = Some(path);
+        self.reload_open = true;
+        self.load_folder(parent, cx);
     }
 
     pub(super) fn play_in_system(&mut self, _: &mut Window, cx: &mut Context<Self>) {

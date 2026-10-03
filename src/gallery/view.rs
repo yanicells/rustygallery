@@ -10,6 +10,7 @@ use super::{
 
 impl Render for Gallery {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let frame_started = std::time::Instant::now();
         Theme::set_current(Theme::resolve(&self.prefs.theme, window.appearance()));
         window.set_window_title(&format!("gallery — {}", self.folder.display()));
 
@@ -87,6 +88,7 @@ impl Render for Gallery {
             .on_action(cx.listener(Self::toggle_star))
             .on_action(cx.listener(Self::cycle_theme))
             .on_action(cx.listener(Self::toggle_video_pref))
+            .on_action(cx.listener(Self::show_about))
             .on_action(cx.listener(Self::toggle_search))
             .on_action(cx.listener(Self::reveal_in_finder))
             .on_action(cx.listener(Self::copy_path))
@@ -680,6 +682,7 @@ impl Render for Gallery {
                     ),
             );
 
+        eprintln!("RUSTY_BENCH baseline entries={} visible={} render_us={}", count, visible_count, frame_started.elapsed().as_micros());
         root.when_some(selected, |s, index| {
             s.child(self.render_lightbox(index, window, cx))
         })
@@ -692,5 +695,6 @@ impl Render for Gallery {
             s.child(self.render_context(window, cx))
         })
         .when(self.toast.is_some(), |s| s.child(self.render_toast(cx)))
+        .when(self.about_open, |s| s.child(self.render_about(cx)))
     }
 }

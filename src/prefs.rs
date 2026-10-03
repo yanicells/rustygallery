@@ -41,9 +41,18 @@ impl Default for Prefs {
 }
 
 impl Prefs {
+    pub(crate) fn support_dir() -> PathBuf {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("rusty-gallery");
+        }
+        std::env::temp_dir().join("rusty-gallery")
+    }
+
     fn path() -> PathBuf {
-        let base = dirs_next();
-        base.join("prefs.txt")
+        Self::support_dir().join("prefs.txt")
     }
 
     pub fn load() -> Self {
@@ -272,12 +281,3 @@ mod tests {
     }
 }
 
-fn dirs_next() -> PathBuf {
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home)
-            .join("Library")
-            .join("Application Support")
-            .join("rusty-gallery");
-    }
-    std::env::temp_dir().join("rusty-gallery")
-}
