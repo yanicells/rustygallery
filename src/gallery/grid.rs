@@ -33,7 +33,7 @@ impl UniformListDecoration for GridDemand {
         _: Point<Pixels>,
         _: Pixels,
         _: usize,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
         let positions = demand_positions(rows, self.columns, self.indices.len());
@@ -44,6 +44,7 @@ impl UniformListDecoration for GridDemand {
                         positions
                             .into_iter()
                             .flat_map(|range| self.indices[range].iter().copied()),
+                        window,
                         cx,
                     );
                 }

@@ -1,8 +1,8 @@
-use gpui::{App, AppContext, Context, ImageSource};
+use gpui::{App, AppContext, Context, ImageSource, Window};
 
 use crate::media::{load_or_make_thumb, Entry};
 
-use super::Gallery;
+use super::{assets, Gallery};
 
 mod queue;
 pub(super) use queue::ThumbRequests;
@@ -11,6 +11,7 @@ impl Gallery {
     pub(super) fn queue_thumbs(
         &mut self,
         indices: impl Iterator<Item = usize>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let demand: Vec<_> = indices
@@ -29,7 +30,7 @@ impl Gallery {
                 .collect();
             for path in obsolete {
                 if let Some(thumb) = self.thumbs.remove(&path) {
-                    ImageSource::from(thumb).remove_asset(cx);
+                    assets::release_image_in(&ImageSource::from(thumb), window, cx);
                 }
             }
             cx.notify();
@@ -76,7 +77,7 @@ impl Gallery {
 
     pub(super) fn clear_thumbs(&mut self, cx: &mut App) {
         for (_, thumb) in self.thumbs.drain() {
-            ImageSource::from(thumb).remove_asset(cx);
+            assets::release_image(ImageSource::from(thumb), cx);
         }
         self.failed_thumbs.clear();
     }

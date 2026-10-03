@@ -27,7 +27,7 @@ impl Render for Gallery {
 
         let visible = self.visible_indices();
         if loading || visible.is_empty() {
-            self.queue_thumbs(std::iter::empty(), cx);
+            self.queue_thumbs(std::iter::empty(), window, cx);
         }
         let visible_count = visible.len();
         let folders = visible

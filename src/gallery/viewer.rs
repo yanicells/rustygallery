@@ -3,7 +3,7 @@ use gpui::{
     MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, Window,
 };
 
-use super::Gallery;
+use super::{assets, Gallery};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ViewMode {
@@ -48,10 +48,10 @@ impl ViewerState {
     /// Release decoded previews before navigation or replacing the viewer state.
     pub(crate) fn clear_preview_assets(&mut self, cx: &mut App) {
         if let Some(source) = self.source.take() {
-            source.remove_asset(cx);
+            assets::release_image(source, cx);
         }
         if let Some(still) = self.still.take() {
-            still.remove_asset(cx);
+            assets::release_image(ImageSource::from(still), cx);
         }
         self.px = None;
     }

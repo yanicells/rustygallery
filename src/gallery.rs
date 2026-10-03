@@ -17,6 +17,7 @@ use crate::prefs::Prefs;
 use crate::ui::SIDEBAR_W;
 
 mod about;
+mod assets;
 mod collision;
 mod context;
 mod density;

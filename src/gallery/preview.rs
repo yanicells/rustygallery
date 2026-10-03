@@ -2,7 +2,7 @@ use gpui::{AppContext, Context, ImageSource};
 
 use crate::media::{display_source, first_frame_image, is_animated, Entry};
 
-use super::Gallery;
+use super::{assets, Gallery};
 
 impl Gallery {
     /// Convert previews off the UI thread; discard results after navigation.
@@ -15,7 +15,7 @@ impl Gallery {
         let path = item.path.clone();
         // Paths key GPUI's cached pixels and decode failures. Refresh even after a
         // folder reload has reset the viewer, including rotation and file repair.
-        ImageSource::from(path.clone()).remove_asset(cx);
+        assets::release_image(ImageSource::from(path.clone()), cx);
         self.preview_gen += 1;
         let generation = self.preview_gen;
 
@@ -33,7 +33,7 @@ impl Gallery {
             this.update(cx, |this, cx| {
                 if this.preview_gen == generation && this.selected == Some(index) {
                     let source = ImageSource::from(source);
-                    source.remove_asset(cx);
+                    assets::release_image(source.clone(), cx);
                     this.viewer.source = Some(source);
                     this.viewer.px = dimensions;
                     this.viewer.still = still;
