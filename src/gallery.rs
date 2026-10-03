@@ -818,6 +818,10 @@ impl Gallery {
                     if !this.slideshow || this.slideshow_gen != gen {
                         return false;
                     }
+                    if crate::app::is_hidden() {
+                        this.hide_playback(cx);
+                        return false;
+                    }
                     let photo_next = this
                         .next_media_index(1)
                         .is_some_and(|i| video::slideshow_eligible(&this.entries[i]));
