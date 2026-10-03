@@ -66,6 +66,7 @@ pub(crate) struct VideoPlayer {
     ready: bool,
     load_deadline: Instant,
     frame_deadline: Option<Instant>,
+    waiting_deadline: Option<Instant>,
 }
 
 impl VideoPlayer {
@@ -125,6 +126,7 @@ impl VideoPlayer {
             ready: false,
             load_deadline: Instant::now() + LOAD_TIMEOUT,
             frame_deadline: None,
+            waiting_deadline: None,
         })
     }
 
@@ -152,7 +154,7 @@ impl VideoPlayer {
         &self.snapshot
     }
 
-    /// Clones the current retained buffer; this does no decoding or conversion.
+    /// Clones the retained buffer; None also represents an intentional blank display.
     pub(crate) fn frame(&self) -> Option<SurfaceSource> {
         self.frame.clone().map(SurfaceSource::from)
     }
@@ -174,19 +176,26 @@ impl VideoPlayer {
                 self.native.as_ref().unwrap().player.play();
             }
         }
-        if self.ready && self.frame.is_some() {
+        // A blank display is ready even though it has no retained image.
+        if self.ready && self.snapshot.state != PlaybackState::Loading {
             self.snapshot.state = PlaybackState::Waiting;
         }
     }
 
     pub(crate) fn pause(&mut self) {
         self.wants_playback = false;
+        self.waiting_deadline = None;
         if let Some(native) = &self.native {
             // SAFETY: NativePlayer is confined to this main-thread backend.
             unsafe {
                 native.player.pause();
             }
-            if self.ready && self.frame.is_some() && self.snapshot.state != PlaybackState::Ended {
+            if self.ready
+                && !matches!(
+                    self.snapshot.state,
+                    PlaybackState::Loading | PlaybackState::Ended
+                )
+            {
                 self.snapshot.state = PlaybackState::Paused;
             }
         }
@@ -252,6 +261,7 @@ impl VideoPlayer {
         self.pending_seek = None;
         self.queued_seek = None;
         self.frame_deadline = None;
+        self.waiting_deadline = None;
         self.frame = None;
         self.wants_playback = false;
         self.ready = false;
@@ -316,7 +326,8 @@ impl VideoPlayer {
             completed: false,
         });
         self.frame_deadline = Some(Instant::now() + FRAME_TIMEOUT);
-        self.snapshot.state = if self.frame.is_none() {
+        self.waiting_deadline = None;
+        self.snapshot.state = if self.snapshot.state == PlaybackState::Loading {
             PlaybackState::Loading
         } else if self.wants_playback {
             PlaybackState::Waiting
@@ -401,28 +412,37 @@ impl VideoPlayer {
             let native = self.native.as_ref().unwrap();
             let time = native.player.currentTime();
             let mut changed = false;
+            let mut progressed = false;
             let can_acquire = self.pending_seek.as_ref().is_none_or(|seek| seek.completed);
+            let has_new_output = can_acquire && native.output.hasNewPixelBufferForItemTime(time);
             // A seek to the same encoded frame need not report "new" output.
             // Once its native completion arrives, request the appropriate frame
             // directly instead of waiting forever for that optimization signal.
-            if can_acquire
-                && (self.pending_seek.is_some() || native.output.hasNewPixelBufferForItemTime(time))
-            {
-                if let Some(buffer) = native
+            if can_acquire && (self.pending_seek.is_some() || has_new_output) {
+                let buffer = native
                     .output
-                    .copyPixelBufferForItemTime_itemTimeForDisplay(time, std::ptr::null_mut())
-                {
-                    // Both bindings represent CVPixelBufferRef. Retain using the
-                    // Get rule, then let objc2's returned +1 reference drop.
-                    let frame = CVPixelBuffer::wrap_under_get_rule(
-                        Retained::as_ptr(&buffer).cast_mut().cast(),
-                    );
-                    if let Err(error) = native.frame_validator.validate(&frame) {
-                        self.fail(error);
-                        return false;
-                    }
-                    changed = self.frame.as_ref() != Some(&frame);
-                    self.frame = Some(frame);
+                    .copyPixelBufferForItemTime_itemTimeForDisplay(time, std::ptr::null_mut());
+                // New output with a NULL buffer explicitly requests a blank
+                // display. A forced seek probe with no new output can instead
+                // mean decoding is unfinished; keep waiting in that case.
+                if buffer.is_some() || has_new_output {
+                    let next_frame = if let Some(buffer) = buffer {
+                        // Both bindings represent CVPixelBufferRef. Retain using
+                        // the Get rule, then drop objc2's returned +1 reference.
+                        let frame = CVPixelBuffer::wrap_under_get_rule(
+                            Retained::as_ptr(&buffer).cast_mut().cast(),
+                        );
+                        if let Err(error) = native.frame_validator.validate(&frame) {
+                            self.fail(error);
+                            return false;
+                        }
+                        Some(frame)
+                    } else {
+                        None
+                    };
+                    changed = self.frame != next_frame;
+                    self.frame = next_frame;
+                    progressed = true;
                     self.frame_deadline = None;
                     if let Some(seek) = self.pending_seek.take() {
                         self.snapshot.position = seek.target;
@@ -446,8 +466,9 @@ impl VideoPlayer {
                 if let Some(position) =
                     finite_seconds(time).filter(|_| self.snapshot.state != PlaybackState::Ended)
                 {
-                    self.snapshot.position =
-                        bounded_seek(position, self.snapshot.duration).unwrap_or(0.0);
+                    let position = bounded_seek(position, self.snapshot.duration).unwrap_or(0.0);
+                    progressed |= position > self.snapshot.position;
+                    self.snapshot.position = position;
                 }
                 let at_end = self
                     .snapshot
@@ -472,6 +493,14 @@ impl VideoPlayer {
                     };
                 }
             }
+            if waiting_timed_out(
+                &mut self.waiting_deadline,
+                self.snapshot.state == PlaybackState::Waiting && self.pending_seek.is_none(),
+                progressed,
+                Instant::now(),
+            ) {
+                self.fail("Timed out waiting for video playback to resume.".into());
+            }
             changed
         }
     }
@@ -487,4 +516,58 @@ fn finite_seconds(time: CMTime) -> Option<f64> {
     // SAFETY: CMTime is a value type returned by AVFoundation.
     let seconds = unsafe { time.seconds() };
     (seconds.is_finite() && seconds >= 0.0).then_some(seconds)
+}
+
+fn waiting_timed_out(
+    deadline: &mut Option<Instant>,
+    waiting: bool,
+    progressed: bool,
+    now: Instant,
+) -> bool {
+    if !waiting {
+        *deadline = None;
+        return false;
+    }
+    if progressed || deadline.is_none() {
+        *deadline = Some(now + FRAME_TIMEOUT);
+    }
+    deadline.is_some_and(|deadline| now >= deadline)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sustained_waiting_expires_but_progress_restarts_the_deadline() {
+        let start = Instant::now();
+        let mut deadline = None;
+        assert!(!waiting_timed_out(&mut deadline, true, false, start));
+        assert!(!waiting_timed_out(
+            &mut deadline,
+            true,
+            false,
+            start + FRAME_TIMEOUT - Duration::from_millis(1),
+        ));
+        let progress = start + FRAME_TIMEOUT;
+        assert!(!waiting_timed_out(&mut deadline, true, true, progress));
+        assert_eq!(deadline, Some(progress + FRAME_TIMEOUT));
+        assert!(waiting_timed_out(
+            &mut deadline,
+            true,
+            false,
+            progress + FRAME_TIMEOUT,
+        ));
+    }
+
+    #[test]
+    fn recovered_or_paused_playback_gets_a_fresh_waiting_deadline() {
+        let start = Instant::now();
+        let mut deadline = Some(start);
+        assert!(!waiting_timed_out(&mut deadline, false, false, start));
+        assert_eq!(deadline, None);
+        let later = start + FRAME_TIMEOUT;
+        assert!(!waiting_timed_out(&mut deadline, true, false, later));
+        assert_eq!(deadline, Some(later + FRAME_TIMEOUT));
+    }
 }

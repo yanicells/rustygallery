@@ -30,10 +30,11 @@ pub(super) struct Validator {
 
 impl Validator {
     pub(super) fn new() -> Result<Self, String> {
-        // Match GPUI's preference for an internal, high-power Metal device.
-        let device = metal::Device::all()
-            .into_iter()
-            .min_by_key(|device| (device.is_removable(), device.is_low_power()))
+        // Match GPUI 0.2.2's actual sort-and-pop selection, including ties.
+        let mut devices = metal::Device::all();
+        devices.sort_by_key(|device| (device.is_removable(), device.is_low_power()));
+        let device = devices
+            .pop()
             .ok_or("No Metal device is available for in-app video.")?;
         let cache = CVMetalTextureCache::new(None, device, None)
             .map_err(|code| format!("Could not prepare video surfaces (CoreVideo {code})."))?;
