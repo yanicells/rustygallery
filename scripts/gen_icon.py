@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import math
 import pathlib
 import struct
 import subprocess
+import sys
 import zlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -13,8 +15,6 @@ OUT = ROOT / "assets" / "icon"
 
 RUST = (196, 92, 56)
 CREAM = (247, 239, 228)
-INK = (36, 28, 24)
-WHITE = (255, 255, 255)
 
 
 def png(path: pathlib.Path, pixels: list[tuple[int, int, int, int]], size: int) -> None:
@@ -31,49 +31,31 @@ def png(path: pathlib.Path, pixels: list[tuple[int, int, int, int]], size: int) 
     )
 
 
-def inside_round_rect(x: float, y: float, size: int, radius: float) -> bool:
-    if x < 0 or y < 0 or x >= size or y >= size:
-        return False
-    r = min(radius, size / 2)
-    if x < r and y < r:
-        return (x - r) ** 2 + (y - r) ** 2 <= r * r
-    if x > size - r and y < r:
-        return (x - (size - r)) ** 2 + (y - r) ** 2 <= r * r
-    if x < r and y > size - r:
-        return (x - r) ** 2 + (y - (size - r)) ** 2 <= r * r
-    if x > size - r and y > size - r:
-        return (x - (size - r)) ** 2 + (y - (size - r)) ** 2 <= r * r
-    return True
+def coverage(distance: float) -> float:
+    """One-pixel antialiasing around a shape's signed distance boundary."""
+    return max(0.0, min(1.0, 0.5 - distance))
 
 
 def paint(size: int, template: bool) -> list[tuple[int, int, int, int]]:
-    cx = cy = size / 2
+    half = size / 2
     outer = size * 0.32
-    pupil = size * 0.13
+    inner = size * 0.17
     radius = size * 0.22
     out = []
     for y in range(size):
         for x in range(size):
-            px = x + 0.5 - cx
-            py = y + 0.5 - cy
-            in_tile = inside_round_rect(x + 0.5, y + 0.5, size, radius)
-            in_lens = px * px + py * py <= outer * outer
-            dx = px + outer * 0.22
-            dy = py + outer * 0.18
-            in_pupil = dx * dx + dy * dy <= pupil * pupil
+            px = x + 0.5 - half
+            py = y + 0.5 - half
+            distance = math.hypot(px, py)
+            ring = coverage(distance - outer) * (1 - coverage(distance - inner))
             if template:
-                if in_lens and not in_pupil:
-                    out.append((*WHITE, 255))
-                else:
-                    out.append((0, 0, 0, 0))
-            elif not in_tile:
-                out.append((0, 0, 0, 0))
-            elif in_pupil:
-                out.append((*INK, 255))
-            elif in_lens:
-                out.append((*CREAM, 255))
-            else:
-                out.append((*RUST, 255))
+                out.append((0, 0, 0, round(255 * ring)))
+                continue
+            qx = abs(px) - (half - radius)
+            qy = abs(py) - (half - radius)
+            tile = coverage(math.hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - radius)
+            color = tuple(round(rust + (cream - rust) * ring) for rust, cream in zip(RUST, CREAM))
+            out.append((*color, round(255 * tile)))
     return out
 
 
@@ -82,7 +64,6 @@ def main() -> None:
     sizes = (16, 32, 64, 128, 256, 512, 1024)
     for size in sizes:
         png(OUT / f"icon_{size}.png", paint(size, False), size)
-    png(OUT / "icon_1024.png", paint(1024, False), 1024)
     png(OUT / "tray_template.png", paint(32, True), 32)
     png(OUT / "app.png", paint(256, False), 256)
 
@@ -102,10 +83,12 @@ def main() -> None:
         for name in names:
             (iconset / name).write_bytes(src.read_bytes())
     icns = OUT / "gallery.icns"
-    try:
+    if sys.platform == "darwin":
+        # A failed conversion must not leave an older ICNS looking successful.
+        icns.unlink(missing_ok=True)
         subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(icns)], check=True)
-    except (OSError, subprocess.CalledProcessError) as exc:
-        print(f"iconutil skipped: {exc}")
+    else:
+        print("ICNS generation requires macOS iconutil; wrote PNGs only")
     print(f"wrote icons in {OUT}")
 
 

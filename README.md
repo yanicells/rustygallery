@@ -1,6 +1,6 @@
 # rusty gallery
 
-<img src="assets/icon/app.png" width="72" alt="gallery icon: a rust tile with a peeking lens" />
+<img src="assets/icon/app.png" width="72" alt="gallery icon: a rust tile with a centered cream ring" />
 
 A fast, minimal photo/video gallery built with [GPUI](https://www.gpui.rs).
 
@@ -9,10 +9,23 @@ A fast, minimal photo/video gallery built with [GPUI](https://www.gpui.rs).
 ```bash
 cargo run --release
 cargo run --release -- ~/Pictures
-./scripts/bundle-macos.sh   # writes dist/gallery.app (menu-bar app, no Dock icon)
+./scripts/bundle-macos.sh   # writes dist/gallery.app and dist/gallery.app.zip
 ```
 
-Opens the last recent folder when no path is passed (falls back to `./media`). The `.app` lives in the menu bar; Show/Hide, Saved, Recents, and a random starred preview are on the status item. `brew install --cask ./scripts/gallery.rb` is the Homebrew shape once a release zip exists.
+Opens the first available recent or saved folder when no usable path is passed. Otherwise it uses the checkout's `media` directory if present, then Pictures or your home directory. Unavailable libraries and stars remain saved for when their drive reconnects.
+
+The `.app` lives in the menu bar; Show/Hide, Open Folder, Saved, Recents, and a random starred preview are on the status item. Closing the window hides the app; Show restores it. Quit exits.
+
+## Install locally on macOS
+
+With Rust and Xcode's Metal toolchain installed, run the bundle script above, then:
+
+```bash
+ditto dist/gallery.app /Applications/gallery.app
+open /Applications/gallery.app
+```
+
+The script derives the version from Cargo, builds with the lockfile, validates the plist, ad-hoc signs and verifies the completed app, and creates a zip. This is a local build, without Developer ID signing or notarization. No public release or Homebrew download is published by this script; `scripts/gallery.rb` is a future release template.
 
 ## Keys
 
@@ -36,7 +49,8 @@ Bindings live in `~/Library/Application Support/rusty-gallery/keys.txt` (created
 | --- | --- |
 | Open Folder / ⌘O | Pick a library |
 | ← Back / ⌘↑ / Backspace | Parent folder |
-| Save / ⌘D | Pin current library |
+| Save / File → Save Library | Pin current library |
+| ⌘D | Duplicate selected files |
 | Folders / Flat / `F` | Browse vs recursive |
 | Click / Enter / Space | Open folder or media |
 | ← → ↑ ↓ | Focus grid / navigate lightbox |
@@ -59,7 +73,7 @@ JPEG, PNG, GIF, WebP, TIFF, BMP load natively. **HEIC/HEIF**, **RAW** (embedded 
 
 | OS | Status |
 | --- | --- |
-| macOS | Primary. `.app` bundle + menu-bar tray. |
+| macOS | Primary. CI tests and validates the local `.app` bundle + menu-bar tray. |
 | Linux | CI builds the binary (Wayland/X11). |
 | Windows | CI job exists and is allowed to fail until GPUI-on-Windows is solid. |
 

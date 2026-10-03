@@ -6,6 +6,22 @@ on:
   pull_request:
 
 jobs:
+  macos:
+    name: macos
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Metal toolchain
+        run: |
+          if ! xcrun -sdk macosx metal --version >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+      - name: test
+        run: cargo test --all-targets --locked
+      - name: bundle and verify
+        run: ./scripts/bundle-macos.sh
+
   linux:
     name: linux
     runs-on: ubuntu-latest
