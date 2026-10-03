@@ -74,7 +74,7 @@ JPEG, PNG, GIF, WebP, TIFF, BMP load natively. **HEIC/HEIF**, **RAW** (embedded 
 
 | OS | Status |
 | --- | --- |
-| macOS | Primary. CI tests and validates the local `.app` bundle + menu-bar tray. |
+| macOS | Primary. CI runs tests and validates the local `.app` bundle. |
 | Linux | CI builds the binary (Wayland/X11). |
 | Windows | CI job exists and is allowed to fail until GPUI-on-Windows is solid. |
 
