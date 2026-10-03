@@ -1,6 +1,6 @@
 use gpui::{
-    point, px, size, Bounds, Context, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, ScrollWheelEvent, Window,
+    point, px, size, App, Bounds, Context, ImageSource, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, Window,
 };
 
 use super::Gallery;
@@ -22,9 +22,8 @@ pub(crate) struct ViewerState {
     pub(crate) exif: bool,
     pub(crate) px: Option<(u32, u32)>,
     pub(crate) anim_paused: bool,
-    pub(crate) source: Option<std::path::PathBuf>,
+    pub(crate) source: Option<ImageSource>,
     pub(crate) still: Option<std::sync::Arc<gpui::Image>>,
-    pub(crate) neighbors: Vec<std::path::PathBuf>,
 }
 
 impl Default for ViewerState {
@@ -41,12 +40,22 @@ impl Default for ViewerState {
             anim_paused: false,
             source: None,
             still: None,
-            neighbors: Vec::new(),
         }
     }
 }
 
 impl ViewerState {
+    /// Release decoded previews before navigation or replacing the viewer state.
+    pub(crate) fn clear_preview_assets(&mut self, cx: &mut App) {
+        if let Some(source) = self.source.take() {
+            source.remove_asset(cx);
+        }
+        if let Some(still) = self.still.take() {
+            still.remove_asset(cx);
+        }
+        self.px = None;
+    }
+
     pub(crate) fn reset_view(&mut self) {
         self.zoom = 1.0;
         self.pan = point(px(0.), px(0.));
@@ -119,6 +128,7 @@ impl Gallery {
         cx.stop_propagation();
         if self.viewer.peek {
             self.selected = None;
+            self.viewer.clear_preview_assets(cx);
             self.viewer = ViewerState::default();
             cx.notify();
             return;

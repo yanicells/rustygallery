@@ -2,7 +2,7 @@ use std::{fs, io::Cursor, path::Path, sync::Arc};
 
 use gpui::{Image, ImageFormat};
 
-use super::preview::{cache_dir, cache_key, preview_jpeg};
+use super::preview::{cache_dir, cache_key, preview_jpeg, publish_jpeg};
 
 const THUMB_MAX: u32 = 320;
 
@@ -18,7 +18,7 @@ pub fn load_or_make_thumb(path: &Path) -> Option<Arc<Image>> {
     }
 
     let bytes = preview_jpeg(path, THUMB_MAX)?;
-    let _ = fs::write(&cache_path, &bytes);
+    let _ = publish_jpeg(&cache_path, &bytes);
     Some(Arc::new(Image::from_bytes(ImageFormat::Jpeg, bytes)))
 }
 
@@ -65,8 +65,20 @@ mod tests {
         let thumb = load_or_make_thumb(&path);
         assert!(thumb.is_some(), "alpha PNG should still produce a thumb");
         let decoded = image::open(&cache).expect("corrupt cache must be regenerated");
-        assert_eq!((decoded.width(), decoded.height()), (THUMB_MAX, THUMB_MAX));
+        assert_eq!((decoded.width(), decoded.height()), (16, 16));
         fs::remove_file(cache).unwrap();
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn retains_thumbnail_bytes_when_cache_publication_fails() {
+        let path = temp_png();
+        let cache = cache_dir().join(format!("{:x}.jpg", cache_key(&path).unwrap()));
+        fs::create_dir(&cache).unwrap();
+        let thumb = load_or_make_thumb(&path).expect("cache failure must not discard a thumbnail");
+        assert!(image::load_from_memory(thumb.bytes()).is_ok());
+        assert!(cache.is_dir());
+        fs::remove_dir(cache).unwrap();
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 }
