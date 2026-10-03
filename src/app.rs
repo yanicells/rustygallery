@@ -15,6 +15,8 @@ use crate::gallery::{
 };
 use crate::prefs::Prefs;
 
+#[cfg(target_os = "macos")]
+mod fullscreen;
 mod keys;
 #[cfg(target_os = "macos")]
 mod tray;
@@ -159,7 +161,11 @@ pub fn start(folder: PathBuf, cx: &mut App) {
                 focus: true,
                 ..Default::default()
             },
-            |window, cx| cx.new(|cx| Gallery::new(folder.clone(), window, cx)),
+            |window, cx| {
+                #[cfg(target_os = "macos")]
+                fullscreen::enable(window);
+                cx.new(|cx| Gallery::new(folder.clone(), window, cx))
+            },
         )
         .unwrap();
 

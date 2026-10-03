@@ -2032,6 +2032,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-core-media",
  "objc2-foundation",
+ "raw-window-handle",
  "tray-icon",
 ]
 
