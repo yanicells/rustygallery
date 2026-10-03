@@ -34,6 +34,7 @@ Bindings live in `~/Library/Application Support/rusty-gallery/keys.txt` (created
 ## What it does
 
 - **Folder browse** — subfolders appear as tiles; click to enter · Back / ⌘↑ to go up
+- **Large libraries** — virtualized rows and bounded thumbnail work prioritize the visible grid
 - **Flat mode** — show every nested media file in one grid (`F` or Folders/Flat toggle)
 - **Open Folder** — big button in the sidebar (also ⌘O)
 - **Saved + Recent** — pin libraries, jump back without re-picking
@@ -67,7 +68,7 @@ Bindings live in `~/Library/Application Support/rusty-gallery/keys.txt` (created
 
 ## Formats
 
-JPEG, PNG, GIF, WebP, TIFF, BMP load natively. **HEIC/HEIF**, **RAW** (embedded JPEG), **AVIF/JXL**, and **video posters** use Quick Look (`qlmanage -t`) then `sips` on macOS. If neither can decode a file, the tile stays empty instead of crashing. GIF/WebP animate in the lightbox; Space pauses on the first frame.
+JPEG, PNG, GIF, WebP, TIFF, BMP load natively. **HEIC/HEIF**, **RAW** (embedded JPEG), **AVIF/JXL**, and **video posters** use Quick Look (`qlmanage -t`) then `sips` on macOS. Failed previews show an unavailable state; converters have deadlines so broken files cannot leave loading stuck indefinitely. GIF/WebP animate in the lightbox; Space pauses on the first frame.
 
 ## Platforms
 

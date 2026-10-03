@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
 
 use gpui::SharedString;
 
@@ -85,19 +84,6 @@ impl Entry {
             Self::Media(m) => &m.path,
         }
     }
-}
-
-pub(super) fn file_stats(path: &Path) -> (u64, u64) {
-    let Ok(meta) = std::fs::metadata(path) else {
-        return (0, 0);
-    };
-    let modified = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    (modified, meta.len())
 }
 
 pub(super) fn is_hidden(path: &Path) -> bool {

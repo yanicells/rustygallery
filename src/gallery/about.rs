@@ -76,20 +76,14 @@ impl Gallery {
                             }))
                             .child("github.com/yanicells/rustygallery"),
                     )
-                    .child(
-                        div()
-                            .mt_2()
-                            .flex()
-                            .justify_end()
-                            .child(btn(
-                                "about-close",
-                                "Close",
-                                false,
-                                false,
-                                cx,
-                                |this, _, _, cx| this.close_about(cx),
-                            )),
-                    ),
+                    .child(div().mt_2().flex().justify_end().child(btn(
+                        "about-close",
+                        "Close",
+                        false,
+                        false,
+                        cx,
+                        |this, _, _, cx| this.close_about(cx),
+                    ))),
             )
     }
 }

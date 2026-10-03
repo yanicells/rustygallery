@@ -7,12 +7,11 @@ use std::{
 
 use gpui::{
     actions, prelude::*, Context, FocusHandle, Image, PathPromptOptions, Pixels, Point,
-    SharedString, Subscription, Window,
+    SharedString, Subscription, UniformListScrollHandle, Window,
 };
 
 use crate::media::{
-    create_folder, load_or_make_thumb, scan_browse, scan_folder_recursive, stamp_entries, Entry,
-    MediaKind,
+    create_folder, scan_browse, scan_folder_recursive, stamp_entries, Entry, MediaKind,
 };
 use crate::prefs::Prefs;
 use crate::ui::SIDEBAR_W;
@@ -25,6 +24,7 @@ mod drag;
 mod exif;
 mod grid;
 mod lightbox;
+mod loading;
 mod name;
 mod ops;
 mod preview;
@@ -36,6 +36,7 @@ mod viewer;
 mod watch;
 
 use density::Density;
+use loading::ThumbRequests;
 use ops::{Clip, CollisionAsk, Toast};
 use sort::{sort_entries, SortKey};
 use viewer::ViewerState;
@@ -130,7 +131,11 @@ pub struct Gallery {
     prefs: Prefs,
     loading: bool,
     load_gen: u64,
-    thumb_gen: u64,
+    thumb_requests: ThumbRequests,
+    thumb_demand: Vec<PathBuf>,
+    grid_scroll: UniformListScrollHandle,
+    grid_focus: Option<usize>,
+    grid_columns: usize,
     density: Density,
     focused: Option<usize>,
     checked: BTreeSet<usize>,
@@ -163,6 +168,7 @@ pub struct Gallery {
     about_open: bool,
     _bounds: Option<Subscription>,
     _appearance: Option<Subscription>,
+    _release: Option<Subscription>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -191,7 +197,11 @@ impl Gallery {
             prefs,
             loading: false,
             load_gen: 0,
-            thumb_gen: 0,
+            thumb_requests: ThumbRequests::default(),
+            thumb_demand: Vec::new(),
+            grid_scroll: UniformListScrollHandle::new(),
+            grid_focus: None,
+            grid_columns: 0,
             density,
             focused: None,
             checked: BTreeSet::new(),
@@ -224,12 +234,18 @@ impl Gallery {
             about_open: false,
             _bounds: None,
             _appearance: None,
+            _release: None,
         };
         gallery._bounds = Some(cx.observe_window_bounds(window, |this, window, _cx| {
             this.persist_window(window);
         }));
         gallery._appearance = Some(cx.observe_window_appearance(window, |_, _, cx| {
             cx.notify();
+        }));
+        gallery._release = Some(cx.on_release(|this, cx| {
+            this.thumb_requests.cancel(this.load_gen);
+            this.clear_thumbs(cx);
+            this.viewer.clear_preview_assets(cx);
         }));
         if std::env::args().nth(1).is_some() {
             gallery.prefs.mark_opened();
@@ -281,19 +297,21 @@ impl Gallery {
 
     fn load_folder(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
         self.folder = folder.clone();
+        self.load_gen += 1;
+        self.thumb_requests.cancel(self.load_gen);
+        self.thumb_demand.clear();
+        self.clear_thumbs(cx);
+        self.grid_scroll = UniformListScrollHandle::new();
+        self.grid_focus = None;
+        self.grid_columns = 0;
         self.entries.clear();
-        self.thumbs.clear();
-        self.failed_thumbs.clear();
-        self.preview_gen += 1;
         self.focused = None;
         self.checked.clear();
         self.anchor = None;
         self.selected = None;
-        self.viewer = ViewerState::default();
+        self.reset_viewer(cx);
         self.stop_slideshow();
         self.loading = true;
-        self.load_gen += 1;
-        self.thumb_gen += 1;
         self.watch_stamp = None;
         let gen = self.load_gen;
         let flat = self.prefs.flat_mode;
@@ -324,7 +342,7 @@ impl Gallery {
                 this.checked.clear();
                 this.anchor = None;
                 this.selected = None;
-                this.viewer = ViewerState::default();
+                this.reset_viewer(cx);
                 if let Some(path) = restore {
                     this.focused = this.entries.iter().position(|e| e.path() == path);
                     if let Some(i) = this.focused {
@@ -349,62 +367,9 @@ impl Gallery {
                         Some(0)
                     };
                 }
-                this.queue_thumbs(cx);
                 cx.notify();
             })
             .ok();
-        })
-        .detach();
-    }
-
-    fn queue_thumbs(&mut self, cx: &mut Context<Self>) {
-        self.thumb_gen += 1;
-        let gen = self.thumb_gen;
-        let paths: Vec<PathBuf> = self
-            .entries
-            .iter()
-            .filter_map(|e| match e {
-                Entry::Media(m) => Some(m.path.clone()),
-                _ => None,
-            })
-            .collect();
-
-        cx.spawn(async move |this, cx| {
-            const BATCH: usize = 8;
-            for chunk in paths.chunks(BATCH) {
-                let chunk = chunk.to_vec();
-                let loaded = cx
-                    .background_spawn(async move {
-                        chunk
-                            .into_iter()
-                            .map(|path| {
-                                let thumb = load_or_make_thumb(&path);
-                                (path, thumb)
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .await;
-
-                let cont = this
-                    .update(cx, |this, cx| {
-                        if this.thumb_gen != gen {
-                            return false;
-                        }
-                        for (path, thumb) in loaded {
-                            if let Some(thumb) = thumb {
-                                this.thumbs.insert(path, thumb);
-                            } else {
-                                this.failed_thumbs.insert(path);
-                            }
-                        }
-                        cx.notify();
-                        true
-                    })
-                    .unwrap_or(false);
-                if !cont {
-                    break;
-                }
-            }
         })
         .detach();
     }
@@ -472,6 +437,7 @@ impl Gallery {
                         cx.notify();
                     } else {
                         self.selected = None;
+                        self.reset_viewer(cx);
                         self.stop_slideshow();
                         cx.open_with_system(&item.path);
                         cx.notify();
@@ -479,6 +445,13 @@ impl Gallery {
                 }
             },
         }
+    }
+
+    fn reset_viewer(&mut self, cx: &mut Context<Self>) {
+        self.preview_gen += 1;
+        self.viewer.clear_preview_assets(cx);
+        self.viewer = ViewerState::default();
+        self.grid_focus = None;
     }
 
     fn close_viewer(&mut self, _: &CloseViewer, window: &mut Window, cx: &mut Context<Self>) {
@@ -505,7 +478,7 @@ impl Gallery {
             return;
         }
         if self.selected.take().is_some() {
-            self.viewer = ViewerState::default();
+            self.reset_viewer(cx);
             self.stop_slideshow();
             cx.notify();
         }
@@ -556,6 +529,7 @@ impl Gallery {
             (cur + delta).clamp(0, len - 1)
         };
         self.focused = Some(vis[next as usize]);
+        self.grid_focus = None;
         cx.notify();
     }
 
@@ -594,7 +568,7 @@ impl Gallery {
     fn next_item(&mut self, _: &NextItem, window: &mut Window, cx: &mut Context<Self>) {
         if self.viewer.peek {
             self.selected = None;
-            self.viewer = ViewerState::default();
+            self.reset_viewer(cx);
             cx.notify();
             return;
         }
@@ -826,12 +800,12 @@ impl Gallery {
             self.show_toast("Could not rotate that file.", None, cx);
             return;
         }
-        self.thumbs.remove(&path);
         self.reload_listing(self.folder.clone(), path, true, cx);
     }
 
     fn apply_sort(&mut self) {
         sort_entries(&mut self.entries, self.sort, self.sort_desc);
+        self.grid_focus = None;
     }
 
     fn persist_sort(&mut self) {
@@ -864,6 +838,7 @@ impl Gallery {
             return;
         }
         self.filter = filter;
+        self.grid_focus = None;
         let vis = self.visible_indices();
         if let Some(f) = self.focused {
             if !vis.contains(&f) {
@@ -873,6 +848,7 @@ impl Gallery {
         if let Some(s) = self.selected {
             if !vis.contains(&s) {
                 self.selected = None;
+                self.reset_viewer(cx);
                 self.stop_slideshow();
             }
         }
@@ -1180,18 +1156,16 @@ impl Gallery {
     }
 
     fn thumb_progress(&self) -> Option<(usize, usize)> {
-        let total = self
-            .entries
-            .iter()
-            .filter(|e| matches!(e, Entry::Media(_)))
-            .count();
+        let total = self.thumb_demand.len();
         if total == 0 {
             return None;
         }
-        Some((
-            (self.thumbs.len() + self.failed_thumbs.len()).min(total),
-            total,
-        ))
+        let done = self
+            .thumb_demand
+            .iter()
+            .filter(|path| self.thumbs.contains_key(*path) || self.failed_thumbs.contains(*path))
+            .count();
+        Some((done, total))
     }
 
     fn status_left(&self, folders: usize, media: usize) -> SharedString {
@@ -1212,7 +1186,7 @@ impl Gallery {
         }
         if let Some((done, total)) = self.thumb_progress() {
             if done < total {
-                parts.push(format!("thumbs {done}/{total}"));
+                parts.push(format!("thumbs {done}/{total} nearby"));
             }
         }
         parts.join(" · ").into()
