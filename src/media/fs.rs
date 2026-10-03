@@ -178,10 +178,6 @@ pub(crate) fn create_folder(parent: &Path, name: &str, root: &Path) -> Result<Pa
     Ok(dest)
 }
 
-pub(crate) fn rename_path(from: &Path, new_name: &str, root: &Path) -> Result<PathBuf, FsError> {
-    rename_with(from, new_name, root, Collision::Fail)
-}
-
 pub(crate) fn rename_with(
     from: &Path,
     new_name: &str,
@@ -391,21 +387,21 @@ mod tests {
     }
 
     #[test]
-    fn rename_path_moves_the_file_and_blocks_taken_names() {
+    fn rename_moves_the_file_and_blocks_taken_names() {
         let root = temp_dir("rename");
         let src = root.join("old.jpg");
         fs::write(&src, []).unwrap();
         fs::write(root.join("taken.jpg"), []).unwrap();
-        let dest = rename_path(&src, "new.jpg", &root).unwrap();
+        let dest = rename_with(&src, "new.jpg", &root, Collision::Fail).unwrap();
         assert_eq!(dest, root.join("new.jpg"));
         assert!(dest.is_file());
         assert!(!src.exists());
         assert_eq!(
-            rename_path(&dest, "taken.jpg", &root),
+            rename_with(&dest, "taken.jpg", &root, Collision::Fail),
             Err(FsError::Collision)
         );
         assert_eq!(
-            rename_path(&dest, "../escape.jpg", &root),
+            rename_with(&dest, "../escape.jpg", &root, Collision::Fail),
             Err(FsError::InvalidName)
         );
         let _ = fs::remove_dir_all(root);
