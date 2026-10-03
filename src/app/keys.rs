@@ -9,7 +9,8 @@ use crate::gallery::{
     MoveDown, MoveLeft, MoveRight, MoveTo, MoveToTrash, MoveUp, NewFolder, NextItem, OpenFocused,
     OpenFolder, PasteSelection, Quit, RenameFocused, ResetZoom, RevealInFinder, RotateLeft,
     RotateRight, ToggleFlat, ToggleFullscreen, ToggleSaved, ToggleSearch, ToggleSlideshow,
-    ToggleSortDir, ToggleStar, ToggleVideoPref, Undo, ViewActual, ViewFill, ViewFit,
+    ToggleSortDir, ToggleStar, ToggleVideoPref, Undo, VideoMute, VideoSeekBack, VideoSeekForward,
+    VideoTogglePlayback, VideoVolumeDown, VideoVolumeUp, ViewActual, ViewFill, ViewFit,
 };
 use crate::prefs::Prefs;
 
@@ -61,6 +62,9 @@ f11 Gallery ToggleFullscreen
 cmd-ctrl-f Gallery ToggleFullscreen
 [ Gallery RotateLeft
 ] Gallery RotateRight
+shift-left Video VideoSeekBack
+shift-right Video VideoSeekForward
+m Video VideoMute
 "#;
 
 pub fn path() -> std::path::PathBuf {
@@ -72,7 +76,7 @@ pub fn install(cx: &mut App) {
     let bindings =
         load().unwrap_or_else(|()| parse(DEFAULT_KEYS).expect("built-in keymap must be valid"));
     cx.clear_key_bindings();
-    cx.bind_keys(bindings);
+    cx.bind_keys(with_video_defaults(bindings));
 }
 
 pub fn watch(cx: &App) {
@@ -91,7 +95,7 @@ pub fn watch(cx: &App) {
         };
         let _ = cx.update(|cx| {
             cx.clear_key_bindings();
-            cx.bind_keys(bindings);
+            cx.bind_keys(with_video_defaults(bindings));
         });
     })
     .detach();
@@ -115,6 +119,24 @@ fn mtime() -> Option<SystemTime> {
 fn load() -> Result<Vec<KeyBinding>, ()> {
     let text = fs::read_to_string(path()).map_err(|_| ())?;
     parse(&text)
+}
+
+/// Extend older maps in memory, preserving every key the user has already bound.
+fn with_video_defaults(mut bindings: Vec<KeyBinding>) -> Vec<KeyBinding> {
+    for (keys, action) in [
+        ("shift-left", "VideoSeekBack"),
+        ("shift-right", "VideoSeekForward"),
+        ("m", "VideoMute"),
+    ] {
+        let extra = binding(keys, Some("Video"), action).expect("valid video default");
+        if !bindings
+            .iter()
+            .any(|existing| existing.keystrokes() == extra.keystrokes())
+        {
+            bindings.push(extra);
+        }
+    }
+    bindings
 }
 
 fn parse(text: &str) -> Result<Vec<KeyBinding>, ()> {
@@ -170,6 +192,12 @@ fn binding(keys: &str, context: Option<&str>, action: &str) -> Option<KeyBinding
         "ToggleStar" => Box::new(ToggleStar),
         "CycleTheme" => Box::new(CycleTheme),
         "ToggleVideoPref" => Box::new(ToggleVideoPref),
+        "VideoTogglePlayback" => Box::new(VideoTogglePlayback),
+        "VideoSeekBack" => Box::new(VideoSeekBack),
+        "VideoSeekForward" => Box::new(VideoSeekForward),
+        "VideoMute" => Box::new(VideoMute),
+        "VideoVolumeUp" => Box::new(VideoVolumeUp),
+        "VideoVolumeDown" => Box::new(VideoVolumeDown),
         "CloseSearch" => Box::new(CloseSearch),
         "ConfirmSearch" => Box::new(ConfirmSearch),
         "RevealInFinder" => Box::new(RevealInFinder),
@@ -231,5 +259,21 @@ mod tests {
     #[test]
     fn rejects_unknown_action() {
         assert!(parse("cmd-q * NotAnAction\n").is_err());
+    }
+
+    #[test]
+    fn video_defaults_fill_unused_keys_without_replacing_custom_bindings() {
+        let original = binding("m", Some("Gallery"), "ToggleStar").unwrap();
+        let key = original.keystrokes().to_vec();
+        let action = original.action().name();
+        let bindings = with_video_defaults(vec![original]);
+        let m: Vec<_> = bindings
+            .iter()
+            .filter(|binding| binding.keystrokes() == key)
+            .collect();
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].action().name(), action);
+        assert_eq!(bindings.len(), 3);
+        assert_eq!(with_video_defaults(bindings).len(), 3);
     }
 }

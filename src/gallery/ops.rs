@@ -199,11 +199,13 @@ impl Gallery {
     }
 
     fn run_one(
-        &self,
+        &mut self,
         kind: &PendingKind,
         from: &Path,
         collision: Collision,
     ) -> Result<UndoItem, FsError> {
+        self.stop_slideshow();
+        self.dispose_video();
         match kind {
             PendingKind::Move { dest_dir } => {
                 let dest = move_into(from, dest_dir, &self.root, collision)?;
@@ -371,6 +373,8 @@ impl Gallery {
         reopen: bool,
         cx: &mut Context<Self>,
     ) {
+        self.stop_slideshow();
+        self.dispose_video();
         match rename_with(&from, &new_name, &self.root, Collision::Fail) {
             Ok(dest) => {
                 self.show_toast(
@@ -441,6 +445,8 @@ impl Gallery {
     }
 
     fn run_trash(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        self.stop_slideshow();
+        self.dispose_video();
         let next = self.neighbor_path(&paths);
         let mut folder = self.folder.clone();
         let mut reopen = self.selected.is_some()
@@ -503,6 +509,8 @@ impl Gallery {
             self.show_toast("Can't duplicate folders.", None, cx);
             return;
         }
+        self.stop_slideshow();
+        self.dispose_video();
         let mut done = Vec::new();
         for path in &paths {
             match duplicate(path, &self.root) {
@@ -675,6 +683,8 @@ impl Gallery {
         let Some(items) = toast.undo else {
             return;
         };
+        self.stop_slideshow();
+        self.dispose_video();
         let mut last = None;
         for item in items.into_iter().rev() {
             let result = match item {

@@ -52,7 +52,11 @@ pub(crate) fn install(handle: WindowHandle<Gallery>, cx: &mut App) {
     let close_ui = ui.clone();
     if handle
         .update(cx, |_, window, cx| {
+            let gallery = cx.weak_entity();
             window.on_window_should_close(cx, move |_, cx| {
+                gallery
+                    .update(cx, |gallery, cx| gallery.hide_playback(cx))
+                    .ok();
                 close_ui.borrow_mut().set_hidden(true);
                 cx.hide();
                 false
@@ -105,18 +109,23 @@ fn dispatch(id: &str, handle: WindowHandle<Gallery>, cx: &mut App, ui: &Rc<RefCe
         "show" => {
             let hide = !ui.borrow().hidden;
             if hide {
+                let _ = handle.update(cx, |gallery, _, cx| gallery.hide_playback(cx));
                 ui.borrow_mut().set_hidden(true);
                 cx.hide();
             } else {
                 ui.borrow_mut().set_hidden(false);
                 cx.activate(true);
-                let _ = handle.update(cx, |_, window, _| window.activate_window());
+                let _ = handle.update(cx, |gallery, window, cx| {
+                    gallery.show_playback(cx);
+                    window.activate_window();
+                });
             }
         }
         "folder" => {
             ui.borrow_mut().set_hidden(false);
             cx.activate(true);
             let _ = handle.update(cx, |gallery, window, cx| {
+                gallery.show_playback(cx);
                 window.activate_window();
                 gallery.pick_folder(cx);
             });
@@ -129,6 +138,7 @@ fn dispatch(id: &str, handle: WindowHandle<Gallery>, cx: &mut App, ui: &Rc<RefCe
             ui.borrow_mut().set_hidden(false);
             cx.activate(true);
             let _ = handle.update(cx, |gallery, window, cx| {
+                gallery.show_playback(cx);
                 window.activate_window();
                 gallery.tray_open_path(path, cx);
             });
@@ -160,6 +170,7 @@ fn dispatch(id: &str, handle: WindowHandle<Gallery>, cx: &mut App, ui: &Rc<RefCe
             ui.borrow_mut().set_hidden(false);
             cx.activate(true);
             let _ = handle.update(cx, |gallery, window, cx| {
+                gallery.show_playback(cx);
                 window.activate_window();
                 gallery.tray_open_path(path, cx);
             });

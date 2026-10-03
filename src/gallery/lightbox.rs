@@ -8,8 +8,8 @@ use crate::ui::{btn, Theme};
 use super::exif::read_exif;
 use super::viewer::ViewMode;
 use super::{
-    viewer::ViewerState, CopyPath, Gallery, MoveToTrash, RevealInFinder, RotateLeft, RotateRight,
-    ToggleFullscreen, ToggleSlideshow, ToggleStar, ViewActual, ViewFill, ViewFit,
+    CopyPath, Gallery, MoveToTrash, RevealInFinder, RotateLeft, RotateRight, ToggleFullscreen,
+    ToggleSlideshow, ToggleStar, ViewActual, ViewFill, ViewFit,
 };
 
 impl Gallery {
@@ -23,7 +23,7 @@ impl Gallery {
             .collect()
     }
 
-    fn filmstrip_indices(&self, current: usize) -> Vec<usize> {
+    pub(super) fn filmstrip_indices(&self, current: usize) -> Vec<usize> {
         let imgs = self.visible_image_indices();
         let Some(pos) = imgs.iter().position(|&i| i == current) else {
             return Vec::new();
@@ -43,6 +43,9 @@ impl Gallery {
         let Entry::Media(item) = &self.entries[index] else {
             return div().into_any_element();
         };
+        if item.kind == MediaKind::Video {
+            return self.render_video(index, item, window, cx);
+        }
         let t = Theme::current();
         let Some(source) = self.viewer.source.clone() else {
             return div()
@@ -64,17 +67,15 @@ impl Gallery {
         let slideshow = self.slideshow;
         let fullscreen = window.is_fullscreen();
         let mode = self.viewer.mode;
-        let video = item.kind == MediaKind::Video;
-        let animated = !video && is_animated(&item.path);
+        let animated = is_animated(&item.path);
         let starred = self.is_favorite(&item.path);
         let meta = format!(
-            "·  {} / {}  ·  {}  ·  {:.0}%{}{}{}",
+            "·  {} / {}  ·  {}  ·  {:.0}%{}{}",
             index + 1,
             self.entries.len(),
             mode_label(mode),
             zoom * 100.0,
             if slideshow { "  ·  slideshow" } else { "" },
-            if video { "  ·  video" } else { "" },
             if animated {
                 if self.viewer.anim_paused {
                     "  ·  paused"
@@ -87,9 +88,7 @@ impl Gallery {
         );
         let strip = self.filmstrip_indices(index);
         let exif = self.viewer.exif.then(|| read_exif(&item.path));
-        let hint = if video {
-            "Space play  ·  Play opens the system player  ·  Esc back"
-        } else if animated {
+        let hint = if animated {
             "Space pause  ·  I info  ·  Esc back"
         } else {
             "I info  ·  [ ] rotate  ·  F11 full  ·  Space next  ·  Esc back"
@@ -105,7 +104,7 @@ impl Gallery {
             .bg(rgb(t.lightbox))
             .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.stop_propagation()))
             .child(self.render_lightbox_header(
-                &item.name, &meta, slideshow, fullscreen, mode, starred, video, cx,
+                &item.name, &meta, slideshow, fullscreen, mode, starred, cx,
             ))
             .child(
                 div()
@@ -121,7 +120,6 @@ impl Gallery {
                         zoom,
                         pan,
                         mode,
-                        video,
                         animated,
                         animated && self.viewer.anim_paused,
                         cx,
@@ -178,7 +176,6 @@ impl Gallery {
         fullscreen: bool,
         mode: ViewMode,
         starred: bool,
-        video: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let t = Theme::current();
@@ -230,16 +227,6 @@ impl Gallery {
                         cx,
                         |this, _, window, cx| this.toggle_star(&ToggleStar, window, cx),
                     ))
-                    .when(video, |s| {
-                        s.child(btn(
-                            "play-btn",
-                            "Play",
-                            false,
-                            false,
-                            cx,
-                            |this, _, window, cx| this.play_in_system(window, cx),
-                        ))
-                    })
                     .child(btn(
                         "fit-btn",
                         "Fit",
@@ -337,9 +324,8 @@ impl Gallery {
                         false,
                         cx,
                         |this, _, _, cx| {
+                            this.reset_viewer(cx);
                             this.selected = None;
-                            this.viewer.clear_preview_assets(cx);
-                            this.viewer = ViewerState::default();
                             this.stop_slideshow();
                             cx.notify();
                         },
@@ -355,7 +341,6 @@ impl Gallery {
         zoom: f32,
         pan: gpui::Point<gpui::Pixels>,
         mode: ViewMode,
-        video: bool,
         animated: bool,
         paused: bool,
         cx: &Context<Self>,
@@ -444,30 +429,9 @@ impl Gallery {
                         .child(if paused { "GIF paused" } else { "GIF" }),
                 )
             })
-            .when(video, |s| {
-                let t = Theme::current();
-                s.child(
-                    div()
-                        .id("video-play")
-                        .absolute()
-                        .bottom_4()
-                        .right_4()
-                        .px_3()
-                        .py_1()
-                        .rounded_md()
-                        .bg(rgb(t.prominent))
-                        .text_color(rgb(t.prominent_text))
-                        .text_sm()
-                        .cursor_pointer()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.play_in_system(window, cx);
-                        }))
-                        .child("Play"),
-                )
-            })
     }
 
-    fn render_filmstrip(
+    pub(super) fn render_filmstrip(
         &self,
         current: usize,
         strip: &[usize],

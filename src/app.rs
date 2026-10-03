@@ -19,6 +19,14 @@ mod keys;
 #[cfg(target_os = "macos")]
 mod tray;
 
+pub(crate) fn is_hidden() -> bool {
+    #[cfg(target_os = "macos")]
+    if let Some(mtm) = objc2::MainThreadMarker::new() {
+        return objc2_app_kit::NSApplication::sharedApplication(mtm).isHidden();
+    }
+    false
+}
+
 pub fn resolve_folder() -> PathBuf {
     if let Some(arg) = std::env::args().nth(1) {
         let path = PathBuf::from(arg);

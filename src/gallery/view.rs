@@ -56,7 +56,11 @@ impl Render for Gallery {
 
         let root = div()
             .id("gallery")
-            .key_context("Gallery")
+            .key_context(if self.selected_video_path().is_some() && !self.player_shortcuts_blocked() {
+                "Gallery Video"
+            } else {
+                "Gallery"
+            })
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::close_viewer))
             .on_action(cx.listener(Self::next_item))
@@ -104,6 +108,12 @@ impl Render for Gallery {
             .on_action(cx.listener(Self::view_fit))
             .on_action(cx.listener(Self::view_fill))
             .on_action(cx.listener(Self::view_actual))
+            .on_action(cx.listener(Self::video_toggle_playback))
+            .on_action(cx.listener(Self::video_seek_back))
+            .on_action(cx.listener(Self::video_seek_forward))
+            .on_action(cx.listener(Self::video_mute))
+            .on_action(cx.listener(Self::video_volume_up))
+            .on_action(cx.listener(Self::video_volume_down))
             .size_full()
             .flex()
             .flex_row()
