@@ -128,6 +128,7 @@ impl Render for Gallery {
                     .id("sidebar")
                     .w(px(SIDEBAR_W))
                     .h_full()
+                    .min_h_0()
                     .flex()
                     .flex_col()
                     .gap_3()
@@ -140,6 +141,7 @@ impl Render for Gallery {
                         div()
                             .flex()
                             .flex_col()
+                            .flex_shrink_0()
                             .gap_2()
                             .child(
                                 div()
@@ -167,80 +169,92 @@ impl Render for Gallery {
                     )
                     .child(
                         div()
+                            .id("sidebar-folders")
                             .flex()
                             .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .px_2()
-                                    .text_xs()
-                                    .text_color(rgb(t.text_faint))
-                                    .child("Saved"),
-                            )
-                            .when(saved_list.is_empty(), |s| {
-                                s.child(
-                                    div()
-                                        .px_2()
-                                        .text_xs()
-                                        .text_color(rgb(t.text_hint))
-                                        .child("Use Save to pin a folder"),
-                                )
-                            })
-                            .children(saved_list.into_iter().enumerate().map(|(i, path)| {
-                                let label: SharedString = path
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or("folder")
-                                    .to_string()
-                                    .into();
-                                let active = path == current_root;
-                                sidebar_row(
-                                    ("saved", i),
-                                    label,
-                                    active,
-                                    cx,
-                                    move |this, _, _, cx| {
-                                        this.open_library(path.clone(), true, cx);
-                                    },
-                                )
-                            })),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
                             .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .gap_3()
                             .child(
                                 div()
-                                    .px_2()
-                                    .text_xs()
-                                    .text_color(rgb(t.text_faint))
-                                    .child("Recent"),
+                                    .flex()
+                                    .flex_col()
+                                    .flex_shrink_0()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .text_xs()
+                                            .text_color(rgb(t.text_faint))
+                                            .child("Saved"),
+                                    )
+                                    .when(saved_list.is_empty(), |s| {
+                                        s.child(
+                                            div()
+                                                .px_2()
+                                                .text_xs()
+                                                .text_color(rgb(t.text_hint))
+                                                .child("Use Save to pin a folder"),
+                                        )
+                                    })
+                                    .children(saved_list.into_iter().enumerate().map(|(i, path)| {
+                                        let label: SharedString = path
+                                            .file_name()
+                                            .and_then(|n| n.to_str())
+                                            .unwrap_or("folder")
+                                            .to_string()
+                                            .into();
+                                        let active = path == current_root;
+                                        sidebar_row(
+                                            ("saved", i),
+                                            label,
+                                            active,
+                                            cx,
+                                            move |this, _, _, cx| {
+                                                this.open_library(path.clone(), true, cx);
+                                            },
+                                        )
+                                    })),
                             )
-                            .children(recents.into_iter().enumerate().map(|(i, path)| {
-                                let label: SharedString = path
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or("folder")
-                                    .to_string()
-                                    .into();
-                                let active = path == current_root;
-                                sidebar_row(
-                                    ("recent", i),
-                                    label,
-                                    active,
-                                    cx,
-                                    move |this, _, _, cx| {
-                                        this.open_library(path.clone(), true, cx);
-                                    },
-                                )
-                            })),
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_shrink_0()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .text_xs()
+                                            .text_color(rgb(t.text_faint))
+                                            .child("Recent"),
+                                    )
+                                    .children(recents.into_iter().enumerate().map(|(i, path)| {
+                                        let label: SharedString = path
+                                            .file_name()
+                                            .and_then(|n| n.to_str())
+                                            .unwrap_or("folder")
+                                            .to_string()
+                                            .into();
+                                        let active = path == current_root;
+                                        sidebar_row(
+                                            ("recent", i),
+                                            label,
+                                            active,
+                                            cx,
+                                            move |this, _, _, cx| {
+                                                this.open_library(path.clone(), true, cx);
+                                            },
+                                        )
+                                    })),
+                            ),
                     )
                     .child(
                         div()
                             .flex()
                             .flex_col()
+                            .flex_shrink_0()
                             .gap_1()
                             .child(sidebar_row(
                                 "theme",
