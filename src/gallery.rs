@@ -32,6 +32,7 @@ mod preview;
 mod search;
 mod sort;
 mod toast;
+mod video;
 mod view;
 mod viewer;
 mod watch;
@@ -39,7 +40,8 @@ mod watch;
 use density::Density;
 use loading::ThumbRequests;
 use ops::{Clip, CollisionAsk, Toast};
-use sort::{sort_entries, SortKey};
+use sort::SortKey;
+use video::VideoViewState;
 use viewer::ViewerState;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -103,6 +105,12 @@ actions!(
         FilterFavorites,
         CycleTheme,
         ToggleVideoPref,
+        VideoTogglePlayback,
+        VideoSeekBack,
+        VideoSeekForward,
+        VideoMute,
+        VideoVolumeUp,
+        VideoVolumeDown,
         About,
     ]
 );
@@ -120,6 +128,24 @@ enum NameKind {
 struct TileMenu {
     index: usize,
     pos: Point<Pixels>,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum ReloadOpen {
+    #[default]
+    FocusOnly,
+    RestoreViewer,
+    Explicit,
+}
+
+impl ReloadOpen {
+    fn allows(self, kind: MediaKind, video_inline: bool) -> bool {
+        match self {
+            Self::FocusOnly => false,
+            Self::RestoreViewer => video::opens_inline(kind, video_inline),
+            Self::Explicit => true,
+        }
+    }
 }
 
 pub struct Gallery {
@@ -143,6 +169,8 @@ pub struct Gallery {
     anchor: Option<usize>,
     selected: Option<usize>,
     viewer: ViewerState,
+    video: VideoViewState,
+    playback_hidden: bool,
     slideshow: bool,
     slideshow_gen: u64,
     focus_handle: FocusHandle,
@@ -159,7 +187,7 @@ pub struct Gallery {
     name_error: Option<String>,
     context: Option<TileMenu>,
     reload_focus: Option<PathBuf>,
-    reload_open: bool,
+    reload_open: ReloadOpen,
     clip: Option<Clip>,
     toast: Option<Toast>,
     toast_gen: u64,
@@ -170,6 +198,8 @@ pub struct Gallery {
     _bounds: Option<Subscription>,
     _appearance: Option<Subscription>,
     _release: Option<Subscription>,
+    _quit: Option<Subscription>,
+    _activation: Option<Subscription>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -209,6 +239,8 @@ impl Gallery {
             anchor: None,
             selected: None,
             viewer: ViewerState::default(),
+            video: VideoViewState::default(),
+            playback_hidden: false,
             slideshow: false,
             slideshow_gen: 0,
             focus_handle,
@@ -225,7 +257,7 @@ impl Gallery {
             name_error: None,
             context: None,
             reload_focus: None,
-            reload_open: false,
+            reload_open: ReloadOpen::FocusOnly,
             clip: None,
             toast: None,
             toast_gen: 0,
@@ -236,6 +268,8 @@ impl Gallery {
             _bounds: None,
             _appearance: None,
             _release: None,
+            _quit: None,
+            _activation: None,
         };
         gallery._bounds = Some(cx.observe_window_bounds(window, |this, window, _cx| {
             this.persist_window(window);
@@ -244,10 +278,29 @@ impl Gallery {
             cx.notify();
         }));
         gallery._release = Some(cx.on_release(|this, cx| {
+            this.stop_slideshow();
+            this.dispose_video();
             this.thumb_requests.cancel(this.load_gen);
             this.clear_thumbs(cx);
             this.viewer.clear_preview_assets(cx);
         }));
+        gallery._quit = Some(cx.on_app_quit(|this, _| {
+            this.stop_slideshow();
+            this.dispose_video();
+            async {}
+        }));
+        gallery._activation = Some(cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.show_playback(cx);
+            } else if crate::app::is_hidden() {
+                this.hide_playback(cx);
+            }
+        }));
+        let closing = cx.weak_entity();
+        window.on_window_should_close(cx, move |_, cx| {
+            closing.update(cx, |this, cx| this.hide_playback(cx)).ok();
+            true
+        });
         if std::env::args().nth(1).is_some() {
             gallery.prefs.mark_opened();
         }
@@ -268,6 +321,8 @@ impl Gallery {
     }
 
     fn open_library(&mut self, folder: PathBuf, set_root: bool, cx: &mut Context<Self>) {
+        self.dispose_video();
+        self.stop_slideshow();
         if set_root {
             self.root = folder.clone();
         }
@@ -277,7 +332,7 @@ impl Gallery {
 
     fn begin_load(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
         self.reload_focus = None;
-        self.reload_open = false;
+        self.reload_open = ReloadOpen::FocusOnly;
         if matches!(self.clip, Some(Clip::Cut(_))) {
             self.clip = None;
         }
@@ -292,11 +347,17 @@ impl Gallery {
         cx: &mut Context<Self>,
     ) {
         self.reload_focus = Some(focus);
-        self.reload_open = open;
+        self.reload_open = if open {
+            ReloadOpen::RestoreViewer
+        } else {
+            ReloadOpen::FocusOnly
+        };
         self.load_folder(folder, cx);
     }
 
     fn load_folder(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
+        self.reset_viewer(cx);
+        self.stop_slideshow();
         self.folder = folder.clone();
         self.load_gen += 1;
         self.thumb_requests.cancel(self.load_gen);
@@ -310,8 +371,6 @@ impl Gallery {
         self.checked.clear();
         self.anchor = None;
         self.selected = None;
-        self.reset_viewer(cx);
-        self.stop_slideshow();
         self.loading = true;
         self.watch_stamp = None;
         let gen = self.load_gen;
@@ -349,14 +408,16 @@ impl Gallery {
                     if let Some(i) = this.focused {
                         this.checked.insert(i);
                         this.anchor = Some(i);
-                        if reopen
-                            && matches!(
-                                &this.entries[i],
-                                Entry::Media(m) if m.kind == MediaKind::Image
-                            )
-                        {
-                            this.selected = Some(i);
-                            this.prepare_preview(cx);
+                        if matches!(
+                            &this.entries[i],
+                            Entry::Media(m) if reopen.allows(m.kind, this.prefs.video_inline)
+                        ) {
+                            if reopen == ReloadOpen::Explicit {
+                                this.open_entry(i, cx);
+                            } else {
+                                this.selected = Some(i);
+                                this.prepare_preview(cx);
+                            }
                         }
                     } else if !this.entries.is_empty() {
                         this.focused = Some(0);
@@ -411,6 +472,7 @@ impl Gallery {
         let Some(entry) = self.entries.get(index).cloned() else {
             return;
         };
+        self.dispose_video();
         self.focused = Some(index);
         self.checked.clear();
         self.checked.insert(index);
@@ -430,7 +492,7 @@ impl Gallery {
                     cx.notify();
                 }
                 MediaKind::Video => {
-                    if self.prefs.video_inline {
+                    if video::opens_inline(item.kind, self.prefs.video_inline) {
                         self.selected = Some(index);
                         self.viewer.peek = false;
                         self.viewer.reset_view();
@@ -449,6 +511,7 @@ impl Gallery {
     }
 
     fn reset_viewer(&mut self, cx: &mut Context<Self>) {
+        self.dispose_video();
         self.preview_gen += 1;
         self.viewer.clear_preview_assets(cx);
         self.viewer = ViewerState::default();
@@ -478,8 +541,9 @@ impl Gallery {
             cx.notify();
             return;
         }
-        if self.selected.take().is_some() {
+        if self.selected.is_some() {
             self.reset_viewer(cx);
+            self.selected = None;
             self.stop_slideshow();
             cx.notify();
         }
@@ -506,6 +570,7 @@ impl Gallery {
             self.open_entry(index, cx);
             return;
         }
+        self.dispose_video();
         self.focused = Some(index);
         self.selected = Some(index);
         self.viewer.peek = true;
@@ -535,6 +600,9 @@ impl Gallery {
     }
 
     fn on_move_left(&mut self, _: &MoveLeft, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.player_shortcuts_blocked() {
+            return;
+        }
         if self.selected.is_some() {
             self.step_image(-1, cx);
         } else {
@@ -543,6 +611,9 @@ impl Gallery {
     }
 
     fn on_move_right(&mut self, _: &MoveRight, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.player_shortcuts_blocked() {
+            return;
+        }
         if self.selected.is_some() {
             self.step_image(1, cx);
         } else {
@@ -551,6 +622,10 @@ impl Gallery {
     }
 
     fn on_move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_video_path().is_some() {
+            self.change_video_volume(0.05, cx);
+            return;
+        }
         if self.selected.is_some() {
             return;
         }
@@ -559,6 +634,10 @@ impl Gallery {
     }
 
     fn on_move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_video_path().is_some() {
+            self.change_video_volume(-0.05, cx);
+            return;
+        }
         if self.selected.is_some() {
             return;
         }
@@ -566,10 +645,14 @@ impl Gallery {
         self.move_focus(cols, false, cx);
     }
 
-    fn next_item(&mut self, _: &NextItem, window: &mut Window, cx: &mut Context<Self>) {
+    fn next_item(&mut self, _: &NextItem, _: &mut Window, cx: &mut Context<Self>) {
+        if self.player_shortcuts_blocked() {
+            return;
+        }
         if self.viewer.peek {
             self.selected = None;
             self.reset_viewer(cx);
+            self.stop_slideshow();
             cx.notify();
             return;
         }
@@ -580,7 +663,7 @@ impl Gallery {
                 return;
             }
             if self.is_video_at(i) {
-                self.play_in_system(window, cx);
+                self.toggle_video_playback(cx);
                 return;
             }
             self.step_image(1, cx);
@@ -590,14 +673,17 @@ impl Gallery {
     }
 
     fn prev_item(&mut self, _: &PrevItem, _: &mut Window, cx: &mut Context<Self>) {
+        if self.player_shortcuts_blocked() {
+            return;
+        }
         if self.selected.is_some() {
             self.step_image(-1, cx);
         }
     }
 
-    fn step_image(&mut self, step: isize, cx: &mut Context<Self>) {
+    fn next_media_index(&self, step: isize) -> Option<usize> {
         if self.entries.is_empty() {
-            return;
+            return None;
         }
         let start = match self.selected {
             Some(i) => i as isize + step,
@@ -610,15 +696,21 @@ impl Gallery {
             if matches!(&self.entries[idx], Entry::Media(_))
                 && self.entry_visible(&self.entries[idx])
             {
-                self.selected = Some(idx);
-                self.focused = Some(idx);
-                self.viewer.reset_view();
-                self.viewer.anim_paused = false;
-                self.prepare_preview(cx);
-                cx.notify();
-                return;
+                return Some(idx);
             }
             i = (i + step).rem_euclid(len);
+        }
+        None
+    }
+
+    fn step_image(&mut self, step: isize, cx: &mut Context<Self>) {
+        let Some(index) = self.next_media_index(step) else {
+            return;
+        };
+        let peek = self.viewer.peek;
+        self.open_entry(index, cx);
+        if peek && self.selected.is_some() && !self.is_video_at(index) {
+            self.viewer.peek = true;
         }
     }
 
@@ -687,15 +779,31 @@ impl Gallery {
     }
 
     fn toggle_slideshow(&mut self, _: &ToggleSlideshow, _: &mut Window, cx: &mut Context<Self>) {
+        if self.player_shortcuts_blocked() {
+            return;
+        }
         if self.slideshow {
             self.stop_slideshow();
             cx.notify();
             return;
         }
-        if self.selected.is_none() {
-            self.step_image(1, cx);
+        if self.selected_video_path().is_some() {
+            return;
         }
         if self.selected.is_none() {
+            let visible = self.visible_indices();
+            let start = self.focused.unwrap_or(0);
+            let photo = visible
+                .iter()
+                .copied()
+                .filter(|&i| i >= start)
+                .chain(visible.iter().copied().filter(|&i| i < start))
+                .find(|&i| video::slideshow_eligible(&self.entries[i]));
+            if let Some(index) = photo {
+                self.open_entry(index, cx);
+            }
+        }
+        if self.selected.is_none() || self.selected_video_path().is_some() {
             return;
         }
         self.slideshow = true;
@@ -710,8 +818,20 @@ impl Gallery {
                     if !this.slideshow || this.slideshow_gen != gen {
                         return false;
                     }
+                    if crate::app::is_hidden() {
+                        this.hide_playback(cx);
+                        return false;
+                    }
+                    let photo_next = this
+                        .next_media_index(1)
+                        .is_some_and(|i| video::slideshow_eligible(&this.entries[i]));
+                    if !photo_next {
+                        this.stop_slideshow();
+                        cx.notify();
+                        return false;
+                    }
                     this.step_image(1, cx);
-                    true
+                    this.slideshow && this.slideshow_gen == gen
                 })
                 .unwrap_or(false);
             if !cont {
@@ -722,7 +842,7 @@ impl Gallery {
     }
 
     fn reset_zoom(&mut self, _: &ResetZoom, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selected.is_some() {
+        if self.selected.is_some() && self.selected_video_path().is_none() {
             self.viewer.reset_view();
             self.viewer.mode = viewer::ViewMode::Fit;
             cx.notify();
@@ -733,12 +853,7 @@ impl Gallery {
         if !matches!(self.entries.get(index), Some(Entry::Media(_))) {
             return;
         }
-        self.selected = Some(index);
-        self.focused = Some(index);
-        self.viewer.reset_view();
-        self.viewer.anim_paused = false;
-        self.prepare_preview(cx);
-        cx.notify();
+        self.open_entry(index, cx);
     }
 
     pub(super) fn toggle_fullscreen(
@@ -755,7 +870,7 @@ impl Gallery {
     }
 
     fn set_view_mode(&mut self, mode: viewer::ViewMode, cx: &mut Context<Self>) {
-        if self.selected.is_none() {
+        if self.selected.is_none() || self.selected_video_path().is_some() {
             return;
         }
         self.viewer.mode = mode;
@@ -787,6 +902,9 @@ impl Gallery {
         let Some(Entry::Media(item)) = self.entries.get(i) else {
             return;
         };
+        if item.kind != MediaKind::Image {
+            return;
+        }
         let path = item.path.clone();
         let Ok(img) = image::open(&path) else {
             self.show_toast("Could not rotate that file.", None, cx);
@@ -802,17 +920,6 @@ impl Gallery {
             return;
         }
         self.reload_listing(self.folder.clone(), path, true, cx);
-    }
-
-    fn apply_sort(&mut self) {
-        sort_entries(&mut self.entries, self.sort, self.sort_desc);
-        self.grid_focus = None;
-    }
-
-    fn persist_sort(&mut self) {
-        self.prefs.sort = self.sort.as_pref().to_string();
-        self.prefs.sort_desc = self.sort_desc;
-        self.prefs.save();
     }
 
     pub(crate) fn entry_visible(&self, entry: &Entry) -> bool {
@@ -848,8 +955,8 @@ impl Gallery {
         }
         if let Some(s) = self.selected {
             if !vis.contains(&s) {
-                self.selected = None;
                 self.reset_viewer(cx);
+                self.selected = None;
                 self.stop_slideshow();
             }
         }
@@ -866,7 +973,7 @@ impl Gallery {
         self.set_filter(Filter::All, cx);
     }
     fn filter_images(&mut self, _: &FilterImages, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selected.is_some() && !self.viewer.peek {
+        if self.selected.is_some() && self.selected_video_path().is_none() && !self.viewer.peek {
             self.viewer.exif = !self.viewer.exif;
             cx.notify();
             return;
@@ -895,6 +1002,8 @@ impl Gallery {
     }
 
     pub(crate) fn tray_open_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.dispose_video();
+        self.stop_slideshow();
         if path.is_dir() {
             self.open_library(path, true, cx);
             return;
@@ -905,7 +1014,7 @@ impl Gallery {
         self.root = parent.clone();
         self.prefs.touch_recent(&parent);
         self.reload_focus = Some(path);
-        self.reload_open = true;
+        self.reload_open = ReloadOpen::Explicit;
         self.load_folder(parent, cx);
     }
 
@@ -916,7 +1025,10 @@ impl Gallery {
         }) else {
             return;
         };
+        self.dispose_video();
+        self.stop_slideshow();
         cx.open_with_system(&path);
+        cx.notify();
     }
 
     pub(super) fn is_favorite(&self, path: &std::path::Path) -> bool {
@@ -957,20 +1069,12 @@ impl Gallery {
     ) {
         self.prefs.video_inline = !self.prefs.video_inline;
         self.prefs.save();
-        cx.notify();
-    }
-
-    fn cycle_sort(&mut self, _: &CycleSort, _: &mut Window, cx: &mut Context<Self>) {
-        self.sort = self.sort.next();
-        self.apply_sort();
-        self.persist_sort();
-        cx.notify();
-    }
-
-    fn toggle_sort_dir(&mut self, _: &ToggleSortDir, _: &mut Window, cx: &mut Context<Self>) {
-        self.sort_desc = !self.sort_desc;
-        self.apply_sort();
-        self.persist_sort();
+        if !self.prefs.video_inline && self.selected_video_path().is_some() {
+            self.dispose_video();
+            self.selected = None;
+            self.reset_viewer(cx);
+            self.stop_slideshow();
+        }
         cx.notify();
     }
 
@@ -1265,6 +1369,8 @@ impl Gallery {
             return;
         };
         let name = self.name_query.clone();
+        self.dispose_video();
+        self.stop_slideshow();
         let result = match kind {
             NameKind::NewFolder => {
                 if self.prefs.flat_mode {
@@ -1415,7 +1521,22 @@ fn range_select(visible: &[usize], anchor: usize, to: usize) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::range_select;
+    use super::{range_select, ReloadOpen};
+    use crate::media::MediaKind;
+
+    #[test]
+    fn only_explicit_reloads_open_videos_with_the_system_preference() {
+        assert!(ReloadOpen::Explicit.allows(MediaKind::Video, false));
+        assert!(!ReloadOpen::RestoreViewer.allows(MediaKind::Video, false));
+        assert!(ReloadOpen::RestoreViewer.allows(MediaKind::Video, true));
+        for video_inline in [false, true] {
+            assert!(ReloadOpen::Explicit.allows(MediaKind::Video, video_inline));
+            assert!(ReloadOpen::Explicit.allows(MediaKind::Image, video_inline));
+            assert!(ReloadOpen::RestoreViewer.allows(MediaKind::Image, video_inline));
+            assert!(!ReloadOpen::FocusOnly.allows(MediaKind::Video, video_inline));
+            assert!(!ReloadOpen::FocusOnly.allows(MediaKind::Image, video_inline));
+        }
+    }
 
     #[test]
     fn shift_range_follows_visible_order() {

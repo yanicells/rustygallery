@@ -15,9 +15,19 @@ use crate::gallery::{
 };
 use crate::prefs::Prefs;
 
+#[cfg(target_os = "macos")]
+mod fullscreen;
 mod keys;
 #[cfg(target_os = "macos")]
 mod tray;
+
+pub(crate) fn is_hidden() -> bool {
+    #[cfg(target_os = "macos")]
+    if let Some(mtm) = objc2::MainThreadMarker::new() {
+        return objc2_app_kit::NSApplication::sharedApplication(mtm).isHidden();
+    }
+    false
+}
 
 pub fn resolve_folder() -> PathBuf {
     if let Some(arg) = std::env::args().nth(1) {
@@ -112,7 +122,7 @@ pub fn start(folder: PathBuf, cx: &mut App) {
                 MenuItem::action("Stars", FilterFavorites),
                 MenuItem::separator(),
                 MenuItem::action("Cycle Theme", CycleTheme),
-                MenuItem::action("Video: stay / system", ToggleVideoPref),
+                MenuItem::action("Video: built-in / system", ToggleVideoPref),
                 MenuItem::separator(),
                 MenuItem::action("Cycle Sort", CycleSort),
                 MenuItem::action("Sort Direction", ToggleSortDir),
@@ -151,7 +161,11 @@ pub fn start(folder: PathBuf, cx: &mut App) {
                 focus: true,
                 ..Default::default()
             },
-            |window, cx| cx.new(|cx| Gallery::new(folder.clone(), window, cx)),
+            |window, cx| {
+                #[cfg(target_os = "macos")]
+                fullscreen::enable(window);
+                cx.new(|cx| Gallery::new(folder.clone(), window, cx))
+            },
         )
         .unwrap();
 

@@ -87,7 +87,7 @@ impl Gallery {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selected.is_none() {
+        if self.selected.is_none() || self.selected_video_path().is_some() {
             return;
         }
         cx.stop_propagation();
@@ -122,14 +122,17 @@ impl Gallery {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selected.is_none() || event.button != MouseButton::Left {
+        if self.selected.is_none()
+            || self.selected_video_path().is_some()
+            || event.button != MouseButton::Left
+        {
             return;
         }
         cx.stop_propagation();
         if self.viewer.peek {
+            self.reset_viewer(cx);
             self.selected = None;
-            self.viewer.clear_preview_assets(cx);
-            self.viewer = ViewerState::default();
+            self.stop_slideshow();
             cx.notify();
             return;
         }

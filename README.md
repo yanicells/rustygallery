@@ -16,6 +16,8 @@ Opens the first available recent or saved folder when no usable path is passed. 
 
 The `.app` lives in the menu bar; Show/Hide, Open Folder, Saved, Recents, and a random starred preview are on the status item. Closing the window hides the app; Show restores it. Quit exits.
 
+Hiding or closing the window stops video audio and the slideshow. Showing a selected video leaves it paused; press Play to reopen playback.
+
 ## Install locally on macOS
 
 With Rust and Xcode's Metal toolchain installed, run the bundle script above, then:
@@ -42,7 +44,7 @@ Bindings live in `~/Library/Application Support/rusty-gallery/keys.txt` (created
 - **Lightbox** — zoom, pan, slideshow; HEIC/RAW show a JPEG preview
 - **Stars** — favorite files, persist, filter (`Stars` chip or ⌘⇧F)
 - **Theme** — Dark / Light / System (toolbar or ⌘⇧T)
-- **Video** — poster in-grid; lightbox Play opens the system player (or skip the lightbox when “Video: system”)
+- **Video** — poster in-grid; native in-app playback on macOS starts paused, with seek, mute, volume, replay, and fullscreen controls. “System player” opens externally; “Video: system” skips the lightbox. Unsupported files or platforms show a clear failure with that fallback.
 
 ## Controls
 
@@ -59,6 +61,9 @@ Bindings live in `~/Library/Application Support/rusty-gallery/keys.txt` (created
 | Scroll / drag | Zoom / pan |
 | `S` | Slideshow |
 | Space | Peek · close peek · pause GIF · play video · next photo |
+| Shift ← / → | Seek video backward / forward 5 seconds |
+| ↑ / ↓ in video | Volume up / down 5% |
+| `M` in video | Mute / unmute |
 | ⌘⇧S | Star / unstar |
 | ⌘⇧F | Stars filter |
 | ⌘⇧T | Cycle theme |
@@ -69,6 +74,8 @@ Bindings live in `~/Library/Application Support/rusty-gallery/keys.txt` (created
 ## Formats
 
 JPEG, PNG, GIF, WebP, TIFF, BMP load natively. **HEIC/HEIF**, **RAW** (embedded JPEG), **AVIF/JXL**, and **video posters** use Quick Look (`qlmanage -t`) then `sips` on macOS. Failed previews show an unavailable state; converters have deadlines so broken files cannot leave loading stuck indefinitely. GIF/WebP animate in the lightbox; Space pauses on the first frame.
+
+In-app video uses macOS AVPlayer and renders native frames directly. Playback support depends on the file's codecs; the poster can be available even when playback is unsupported. Video stays fitted to the window, without photo zoom, rotation, or EXIF controls. Volume and mute carry between videos for the current app session. Slideshows start on photos and stop before a video.
 
 ## Platforms
 
