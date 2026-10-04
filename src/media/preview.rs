@@ -1,26 +1,79 @@
 use std::{
     fs,
     hash::{Hash, Hasher},
-    io::Cursor,
+    io::{self, Cursor, Write},
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::UNIX_EPOCH,
 };
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 use std::{
-    sync::atomic::{AtomicU64, Ordering},
-    time::SystemTime,
+    process::{Child, Command, ExitStatus},
+    thread,
+    time::{Duration, Instant, SystemTime},
 };
+
+use gpui::{Image, ImageFormat, ImageSource};
 
 use super::types::{ext_is, HEIC_EXTS, JXL_EXTS, RAW_EXTS};
 
-#[cfg(target_os = "macos")]
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(target_os = "macos")]
+const CONVERSION_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Send-safe preview result; GPUI image sources are created on the UI thread.
+pub(crate) enum PreviewSource {
+    Path(PathBuf),
+    Jpeg(Arc<Image>),
+}
+
+impl PreviewSource {
+    pub(crate) fn dimensions(&self) -> Option<(u32, u32)> {
+        match self {
+            Self::Path(path) => image::image_dimensions(path).ok(),
+            Self::Jpeg(image) => image::ImageReader::with_format(
+                Cursor::new(image.bytes()),
+                image::ImageFormat::Jpeg,
+            )
+            .into_dimensions()
+            .ok(),
+        }
+    }
+}
+
+impl From<PreviewSource> for ImageSource {
+    fn from(source: PreviewSource) -> Self {
+        match source {
+            PreviewSource::Path(path) => path.into(),
+            PreviewSource::Jpeg(image) => image.into(),
+        }
+    }
+}
 
 pub(crate) fn cache_dir() -> PathBuf {
     let dir = std::env::temp_dir().join("rusty-gallery-thumbs");
     let _ = fs::create_dir_all(&dir);
     dir
+}
+
+/// Publish complete cache bytes atomically, including when requests overlap.
+pub(super) fn publish_jpeg(dest: &Path, bytes: &[u8]) -> io::Result<()> {
+    let id = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pending = dest.with_extension(format!("pending-{}-{id}", std::process::id()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&pending)?;
+    let result = file.write_all(bytes);
+    drop(file);
+    let result = result.and_then(|()| fs::rename(&pending, dest));
+    let _ = fs::remove_file(&pending);
+    result
 }
 
 pub(crate) fn cache_key(path: &Path) -> Option<u64> {
@@ -30,7 +83,7 @@ pub(crate) fn cache_key(path: &Path) -> Option<u64> {
         .ok()?
         .duration_since(UNIX_EPOCH)
         .ok()?
-        .as_secs();
+        .as_nanos();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     path.hash(&mut hasher);
     modified.hash(&mut hasher);
@@ -61,25 +114,30 @@ pub fn preview_jpeg(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
     None
 }
 
-/// Path GPUI can paint. Native formats stay as-is; HEIC/RAW/video become a cached JPEG.
-pub fn display_source(path: &Path) -> PathBuf {
+/// Native formats retain their path and animation; converted previews can survive cache failures.
+pub(crate) fn display_source(path: &Path) -> PreviewSource {
     if can_paint_directly(path) {
-        return path.to_path_buf();
+        return PreviewSource::Path(path.to_path_buf());
     }
-    let Some(key) = cache_key(path) else {
-        return path.to_path_buf();
-    };
-    let dest = cache_dir().join(format!("{key:x}-full.jpg"));
-    if image::open(&dest).is_ok() {
-        return dest;
-    }
-    if let Some(bytes) = preview_jpeg(path, 2048) {
-        let _ = fs::write(&dest, bytes);
-        if dest.exists() {
-            return dest;
+    converted_source(path, &cache_dir())
+}
+
+fn converted_source(path: &Path, cache: &Path) -> PreviewSource {
+    let dest = cache_key(path).map(|key| cache.join(format!("{key:x}-full.jpg")));
+    if let Some(dest) = dest.as_ref() {
+        if image::open(dest).is_ok() {
+            return PreviewSource::Path(dest.clone());
         }
     }
-    path.to_path_buf()
+    if let Some(bytes) = preview_jpeg(path, 2048) {
+        if let Some(dest) = dest {
+            if publish_jpeg(&dest, &bytes).is_ok() {
+                return PreviewSource::Path(dest);
+            }
+        }
+        return PreviewSource::Jpeg(Arc::new(Image::from_bytes(ImageFormat::Jpeg, bytes)));
+    }
+    PreviewSource::Path(path.to_path_buf())
 }
 
 pub fn is_animated(path: &Path) -> bool {
@@ -103,7 +161,11 @@ fn can_paint_directly(path: &Path) -> bool {
 }
 
 fn encode_jpeg(img: &image::DynamicImage, max_edge: u32) -> Option<Vec<u8>> {
-    let thumb = img.thumbnail(max_edge, max_edge).to_rgb8();
+    let thumb = if img.width() > max_edge || img.height() > max_edge {
+        img.thumbnail(max_edge, max_edge).to_rgb8()
+    } else {
+        img.to_rgb8()
+    };
     let mut bytes = Vec::new();
     {
         let mut cursor = Cursor::new(&mut bytes);
@@ -151,19 +213,21 @@ fn find_eoi(data: &[u8]) -> Option<usize> {
 #[cfg(target_os = "macos")]
 fn macos_preview(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
     let dir = unique_temp_dir("ql")?;
-    let status = std::process::Command::new("qlmanage")
-        .args(["-t", "-s", &max_edge.to_string(), "-o"])
-        .arg(&dir)
-        .arg(path)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .ok();
+    let status = run_with_timeout(
+        Command::new("qlmanage")
+            .args(["-t", "-s", &max_edge.to_string(), "-o"])
+            .arg(&dir.path)
+            .arg(path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+        CONVERSION_TIMEOUT,
+    )
+    .ok();
     let bytes = if status.is_some_and(|status| status.success()) {
         let name = path.file_name()?.to_string_lossy();
-        let out = dir.join(format!("{name}.png"));
+        let out = dir.path.join(format!("{name}.png"));
         fs::read(&out).ok().or_else(|| {
-            fs::read_dir(&dir).ok()?.find_map(|e| {
+            fs::read_dir(&dir.path).ok()?.find_map(|e| {
                 let p = e.ok()?.path();
                 p.is_file().then(|| fs::read(p).ok()).flatten()
             })
@@ -171,7 +235,7 @@ fn macos_preview(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
     } else {
         None
     };
-    let _ = fs::remove_dir_all(&dir);
+    drop(dir);
     if bytes
         .as_deref()
         .is_some_and(|bytes| image::load_from_memory(bytes).is_ok())
@@ -185,27 +249,69 @@ fn macos_preview(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
 #[cfg(target_os = "macos")]
 fn sips_jpeg(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
     let dir = unique_temp_dir("sips")?;
-    let dest = dir.join("preview.jpg");
-    let status = std::process::Command::new("sips")
-        .args(["-s", "format", "jpeg", "-Z", &max_edge.to_string()])
-        .arg(path)
-        .arg("--out")
-        .arg(&dest)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .ok();
+    let dest = dir.path.join("preview.jpg");
+    let status = run_with_timeout(
+        Command::new("sips")
+            .args(["-s", "format", "jpeg", "-Z", &max_edge.to_string()])
+            .arg(path)
+            .arg("--out")
+            .arg(&dest)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+        CONVERSION_TIMEOUT,
+    )
+    .ok();
     if !status.is_some_and(|status| status.success()) {
-        let _ = fs::remove_dir_all(&dir);
         return None;
     }
     let bytes = fs::read(&dest).ok();
-    let _ = fs::remove_dir_all(&dir);
     bytes.filter(|b| !b.is_empty())
 }
 
-#[cfg(target_os = "macos")]
-fn unique_temp_dir(prefix: &str) -> Option<PathBuf> {
+#[cfg(any(target_os = "macos", test))]
+fn run_with_timeout(command: &mut Command, timeout: Duration) -> io::Result<ExitStatus> {
+    let mut child = command.spawn()?;
+    wait_with_timeout(&mut child, timeout)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn wait_with_timeout(child: &mut Child, timeout: Duration) -> io::Result<ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let error = match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) if Instant::now() < deadline => {
+                thread::sleep(
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(Duration::from_millis(20)),
+                );
+                continue;
+            }
+            Ok(None) => io::Error::new(io::ErrorKind::TimedOut, "preview conversion timed out"),
+            Err(error) => error,
+        };
+        // Reap even if kill races with the child's exit or the status poll failed.
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+struct PreviewTempDir {
+    path: PathBuf,
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl Drop for PreviewTempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn unique_temp_dir(prefix: &str) -> Option<PreviewTempDir> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()?
@@ -214,7 +320,7 @@ fn unique_temp_dir(prefix: &str) -> Option<PathBuf> {
         let id = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("rusty-gallery-{prefix}-{now}-{id}"));
         if fs::create_dir(&dir).is_ok() {
-            return Some(dir);
+            return Some(PreviewTempDir { path: dir });
         }
     }
     None
@@ -223,6 +329,19 @@ fn unique_temp_dir(prefix: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn raw_fixture(dir: &Path) -> PathBuf {
+        let img = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            24,
+            12,
+            image::Rgb([40, 180, 90]),
+        ));
+        let mut bytes = b"RAW container fixture".to_vec();
+        bytes.extend(encode_jpeg(&img, 24).unwrap());
+        let path = dir.join("sample.cr3");
+        fs::write(&path, bytes).unwrap();
+        path
+    }
 
     #[test]
     fn finds_the_largest_embedded_jpeg() {
@@ -252,5 +371,166 @@ mod tests {
     fn embedded_scan_is_reserved_for_raw_extensions() {
         assert!(ext_is(Path::new("photo.cr3"), RAW_EXTS));
         assert!(!ext_is(Path::new("clip.mp4"), RAW_EXTS));
+    }
+
+    #[test]
+    fn preserves_native_sources_including_animation() {
+        for ext in ["jpg", "png", "gif", "webp", "bmp", "tif", "tiff"] {
+            let path = PathBuf::from(format!("native.{ext}"));
+            let source = ImageSource::from(display_source(&path));
+            let ImageSource::Resource(gpui::Resource::Path(resource)) = source else {
+                panic!("native {ext} must retain its resource loader");
+            };
+            assert_eq!(resource.as_ref(), path.as_path());
+        }
+        assert!(is_animated(Path::new("native.gif")));
+        assert!(is_animated(Path::new("native.webp")));
+    }
+
+    #[test]
+    fn regenerates_corrupt_full_preview_cache() {
+        let dir = unique_temp_dir("full-cache-test").unwrap();
+        let path = raw_fixture(&dir.path);
+        let dest = dir
+            .path
+            .join(format!("{:x}-full.jpg", cache_key(&path).unwrap()));
+        fs::write(&dest, b"incomplete cached JPEG").unwrap();
+
+        let source = converted_source(&path, &dir.path);
+        let PreviewSource::Path(source) = source else {
+            panic!("a writable cache should publish its converted preview");
+        };
+        assert_eq!(source, dest);
+        assert!(image::open(&source).is_ok());
+        assert!(matches!(
+            converted_source(&path, &dir.path),
+            PreviewSource::Path(cached) if cached == dest
+        ));
+    }
+
+    #[test]
+    fn retains_jpeg_bytes_when_cache_publication_fails() {
+        let dir = unique_temp_dir("full-cache-failure-test").unwrap();
+        let path = raw_fixture(&dir.path);
+        let dest = dir
+            .path
+            .join(format!("{:x}-full.jpg", cache_key(&path).unwrap()));
+        // Existing invalid cache entries must not win merely because they exist.
+        // A directory blocks publication deterministically, even when run as root.
+        fs::create_dir(&dest).unwrap();
+        fs::write(dest.join("partial"), b"incomplete cached JPEG").unwrap();
+        let unavailable_cache = dir.path.join("unavailable-cache");
+        fs::write(&unavailable_cache, b"blocks the cache directory").unwrap();
+
+        for cache in [&dir.path, &unavailable_cache] {
+            let source = converted_source(&path, cache);
+            assert_eq!(source.dimensions(), Some((24, 12)));
+            let ImageSource::Image(image) = ImageSource::from(source) else {
+                panic!("failed publication must retain an in-memory preview");
+            };
+            assert!(image::load_from_memory(image.bytes()).is_ok());
+        }
+        assert!(dest.is_dir());
+        assert_eq!(
+            fs::read(unavailable_cache).unwrap(),
+            b"blocks the cache directory"
+        );
+    }
+
+    #[test]
+    fn cache_publication_handles_overlapping_writers_and_cleans_failures() {
+        let dir = unique_temp_dir("cache-publication-test").unwrap();
+        let dest = dir.path.join("preview.jpg");
+        fs::write(&dest, b"incomplete cached JPEG").unwrap();
+        let previews = [image::Rgb([180, 40, 90]), image::Rgb([40, 180, 90])].map(|color| {
+            let img = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(24, 12, color));
+            encode_jpeg(&img, 24).unwrap()
+        });
+        let barrier = std::sync::Barrier::new(3);
+        thread::scope(|scope| {
+            for bytes in &previews {
+                let barrier = &barrier;
+                let dest = &dest;
+                scope.spawn(move || {
+                    barrier.wait();
+                    publish_jpeg(dest, bytes).unwrap();
+                });
+            }
+            barrier.wait();
+        });
+        let published = fs::read(&dest).unwrap();
+        assert!(previews.contains(&published));
+        assert!(image::open(&dest).is_ok());
+
+        let blocked = dir.path.join("blocked.jpg");
+        fs::create_dir(&blocked).unwrap();
+        assert!(publish_jpeg(&blocked, &previews[0]).is_err());
+        assert_eq!(fs::read_dir(&dir.path).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn cache_key_distinguishes_changes_within_one_second() {
+        let dir = unique_temp_dir("cache-key-test").unwrap();
+        let path = dir.path.join("photo.jpg");
+        fs::write(&path, b"same length").unwrap();
+        let file = fs::File::open(&path).unwrap();
+        let second = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        file.set_times(fs::FileTimes::new().set_modified(second + Duration::from_millis(100)))
+            .unwrap();
+        let before = cache_key(&path).unwrap();
+        file.set_times(fs::FileTimes::new().set_modified(second + Duration::from_millis(700)))
+            .unwrap();
+        assert_ne!(before, cache_key(&path).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn converter_timeout_kills_reaps_and_cleans_partial_output() {
+        let dir = unique_temp_dir("deadline-test").unwrap();
+        let temp_path = dir.path.clone();
+        fs::write(temp_path.join("partial.jpg"), b"unfinished preview").unwrap();
+        let mut child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let started = Instant::now();
+        let error = wait_with_timeout(&mut child, Duration::from_millis(20)).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        // A killed but unreaped child still exists as a zombie. Check before
+        // invoking another wait/try_wait, which could mask a missing reap.
+        assert!(!Command::new("/bin/kill")
+            .args(["-0", &child.id().to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success());
+        drop(dir);
+        assert!(!temp_path.exists());
+        let status = run_with_timeout(
+            Command::new("/bin/sh").args(["-c", "exit 0"]),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert!(
+            status.success(),
+            "a timed-out converter must not block the next job"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn converter_reports_exit_and_spawn_failures() {
+        let dir = unique_temp_dir("converter-failure-test").unwrap();
+        let status = run_with_timeout(
+            Command::new("/bin/sh").args(["-c", "exit 7"]),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(status.code(), Some(7));
+        let error = run_with_timeout(
+            &mut Command::new(dir.path.join("missing-converter")),
+            Duration::from_millis(20),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 }

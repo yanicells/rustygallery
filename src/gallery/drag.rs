@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use gpui::{div, prelude::*, rgb, Context, ExternalPaths, Point, Render, Window};
 
@@ -9,7 +9,7 @@ use super::Gallery;
 
 #[derive(Clone)]
 pub(super) struct TileDrag {
-    pub(super) paths: Vec<PathBuf>,
+    pub(super) paths: Arc<[PathBuf]>,
 }
 
 impl Render for TileDrag {
@@ -39,20 +39,23 @@ impl Render for TileDrag {
 }
 
 impl Gallery {
-    pub(super) fn drag_paths(&self, index: usize) -> Vec<PathBuf> {
+    pub(super) fn selected_drag_paths(&self) -> Arc<[PathBuf]> {
+        self.checked
+            .iter()
+            .filter_map(|&i| match self.entries.get(i) {
+                Some(Entry::Media(item)) => Some(item.path.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub(super) fn drag_paths(&self, index: usize, selected: &Arc<[PathBuf]>) -> Arc<[PathBuf]> {
         if self.checked.contains(&index) {
-            return self
-                .checked
-                .iter()
-                .filter_map(|&i| match self.entries.get(i) {
-                    Some(Entry::Media(item)) => Some(item.path.clone()),
-                    _ => None,
-                })
-                .collect();
+            return selected.clone();
         }
         match self.entries.get(index) {
-            Some(Entry::Media(item)) => vec![item.path.clone()],
-            _ => Vec::new(),
+            Some(Entry::Media(item)) => vec![item.path.clone()].into(),
+            _ => Arc::from([]),
         }
     }
 

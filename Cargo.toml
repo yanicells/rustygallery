@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Minimal photo/video gallery viewer built with GPUI"
 license = "MIT"
+repository = "https://github.com/yanicells/rustygallery"
 
 [dependencies]
 gpui = "0.2.2"
@@ -14,6 +15,7 @@ kamadak-exif = "0.6"
 tray-icon = "0.21"
 objc2 = "0.6"
 objc2-foundation = "0.3"
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSRunningApplication"] }
 
 [profile.release]
 lto = true

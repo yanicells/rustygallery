@@ -1,5 +1,7 @@
 # rusty gallery
 
+<img src="assets/icon/app.png" width="72" alt="gallery icon: a rust tile with a centered cream ring" />
+
 A fast, minimal photo/video gallery built with [GPUI](https://www.gpui.rs).
 
 ## Run
@@ -7,13 +9,32 @@ A fast, minimal photo/video gallery built with [GPUI](https://www.gpui.rs).
 ```bash
 cargo run --release
 cargo run --release -- ~/Pictures
+./scripts/bundle-macos.sh   # writes dist/gallery.app and dist/gallery.app.zip
 ```
 
-Opens the last recent folder when no path is passed (falls back to `./media`).
+Opens the first available recent or saved folder when no usable path is passed. Otherwise it uses the checkout's `media` directory if present, then Pictures or your home directory. Unavailable libraries and stars remain saved for when their drive reconnects.
+
+The `.app` lives in the menu bar; Show/Hide, Open Folder, Saved, Recents, and a random starred preview are on the status item. Closing the window hides the app; Show restores it. Quit exits.
+
+## Install locally on macOS
+
+With Rust and Xcode's Metal toolchain installed, run the bundle script above, then:
+
+```bash
+ditto dist/gallery.app /Applications/gallery.app
+open /Applications/gallery.app
+```
+
+The script derives the version from Cargo, builds with the lockfile, validates the plist, ad-hoc signs and verifies the completed app, and creates a zip. This is a local build, without Developer ID signing or notarization. No public release or Homebrew download is published by this script; `scripts/gallery.rb` is a future release template.
+
+## Keys
+
+Bindings live in `~/Library/Application Support/rusty-gallery/keys.txt` (created on first launch). Format is documented in [KEYS.md](KEYS.md). The file reloads when it changes.
 
 ## What it does
 
 - **Folder browse** — subfolders appear as tiles; click to enter · Back / ⌘↑ to go up
+- **Large libraries** — virtualized rows and bounded thumbnail work prioritize the visible grid
 - **Flat mode** — show every nested media file in one grid (`F` or Folders/Flat toggle)
 - **Open Folder** — big button in the sidebar (also ⌘O)
 - **Saved + Recent** — pin libraries, jump back without re-picking
@@ -29,7 +50,8 @@ Opens the last recent folder when no path is passed (falls back to `./media`).
 | --- | --- |
 | Open Folder / ⌘O | Pick a library |
 | ← Back / ⌘↑ / Backspace | Parent folder |
-| Save / ⌘D | Pin current library |
+| Save / File → Save Library | Pin current library |
+| ⌘D | Duplicate selected files |
 | Folders / Flat / `F` | Browse vs recursive |
 | Click / Enter / Space | Open folder or media |
 | ← → ↑ ↓ | Focus grid / navigate lightbox |
@@ -46,4 +68,14 @@ Opens the last recent folder when no path is passed (falls back to `./media`).
 
 ## Formats
 
-JPEG, PNG, GIF, WebP, TIFF, BMP load natively. **HEIC/HEIF**, **RAW** (embedded JPEG), **AVIF/JXL**, and **video posters** use Quick Look (`qlmanage -t`) then `sips` on macOS. If neither can decode a file, the tile stays empty instead of crashing. GIF/WebP animate in the lightbox; Space pauses on the first frame.
+JPEG, PNG, GIF, WebP, TIFF, BMP load natively. **HEIC/HEIF**, **RAW** (embedded JPEG), **AVIF/JXL**, and **video posters** use Quick Look (`qlmanage -t`) then `sips` on macOS. Failed previews show an unavailable state; converters have deadlines so broken files cannot leave loading stuck indefinitely. GIF/WebP animate in the lightbox; Space pauses on the first frame.
+
+## Platforms
+
+| OS | Status |
+| --- | --- |
+| macOS | Primary. CI runs tests and validates the local `.app` bundle. |
+| Linux | CI builds the binary (Wayland/X11). |
+| Windows | CI job exists and is allowed to fail until GPUI-on-Windows is solid. |
+
+About (gallery menu) shows the Cargo version and a link to the repo.

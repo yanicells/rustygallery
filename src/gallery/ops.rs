@@ -237,6 +237,7 @@ impl Gallery {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn pump_job(
         &mut self,
         kind: PendingKind,

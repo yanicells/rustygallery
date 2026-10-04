@@ -1,6 +1,6 @@
-use std::path::PathBuf;
-
-use gpui::{div, img, prelude::*, px, relative, rgb, Context, MouseButton, ObjectFit, Window};
+use gpui::{
+    div, img, prelude::*, px, relative, rgb, Context, ImageSource, MouseButton, ObjectFit, Window,
+};
 
 use crate::media::{is_animated, Entry, MediaKind};
 use crate::ui::{btn, Theme};
@@ -32,20 +32,6 @@ impl Gallery {
         let end = (start + 9).min(imgs.len());
         let start = end.saturating_sub(9);
         imgs[start..end].to_vec()
-    }
-
-    pub(super) fn neighbor_paths(&self, current: usize) -> Vec<PathBuf> {
-        let imgs = self.visible_image_indices();
-        let Some(pos) = imgs.iter().position(|&i| i == current) else {
-            return Vec::new();
-        };
-        let mut out = Vec::new();
-        for i in [pos.checked_sub(1), Some(pos + 1)].into_iter().flatten() {
-            if let Some(Entry::Media(item)) = imgs.get(i).and_then(|&idx| self.entries.get(idx)) {
-                out.push(item.path.clone());
-            }
-        }
-        out
     }
 
     pub(super) fn render_lightbox(
@@ -99,7 +85,6 @@ impl Gallery {
                 ""
             }
         );
-        let neighbors = self.viewer.neighbors.clone();
         let strip = self.filmstrip_indices(index);
         let exif = self.viewer.exif.then(|| read_exif(&item.path));
         let hint = if video {
@@ -144,14 +129,6 @@ impl Gallery {
                     .when_some(exif, |s, info| s.child(render_exif_panel(&info))),
             )
             .child(self.render_filmstrip(index, &strip, cx))
-            .children(neighbors.into_iter().enumerate().map(|(i, path)| {
-                img(path)
-                    .with_fallback(preview_unavailable)
-                    .id(("prefetch", i))
-                    .w(px(0.))
-                    .h(px(0.))
-                    .overflow_hidden()
-            }))
             .child(
                 div()
                     .px_4()
@@ -163,7 +140,12 @@ impl Gallery {
             .into_any_element()
     }
 
-    fn render_peek(&self, path: PathBuf, modified: u64, cx: &Context<Self>) -> gpui::AnyElement {
+    fn render_peek(
+        &self,
+        source: ImageSource,
+        modified: u64,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
         let t = Theme::current();
         div()
             .id("peek")
@@ -177,7 +159,7 @@ impl Gallery {
             .on_scroll_wheel(cx.listener(Self::on_viewer_scroll))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_viewer_down))
             .child(
-                img(path)
+                img(source)
                     .with_fallback(preview_unavailable)
                     .id(("peek-img", modified))
                     .w_full()
@@ -356,6 +338,7 @@ impl Gallery {
                         cx,
                         |this, _, _, cx| {
                             this.selected = None;
+                            this.viewer.clear_preview_assets(cx);
                             this.viewer = ViewerState::default();
                             this.stop_slideshow();
                             cx.notify();
@@ -367,7 +350,7 @@ impl Gallery {
     #[allow(clippy::too_many_arguments)]
     fn render_lightbox_body(
         &self,
-        source: PathBuf,
+        source: ImageSource,
         modified: u64,
         zoom: f32,
         pan: gpui::Point<gpui::Pixels>,

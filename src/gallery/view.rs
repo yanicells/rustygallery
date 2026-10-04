@@ -5,7 +5,7 @@ use crate::ui::{btn, btn_disabled, sidebar_row, Theme, SIDEBAR_W};
 
 use super::{
     density::Density, DropHint, Filter, Gallery, GoUp, ToggleFlat, ToggleSaved, ToggleSlideshow,
-    GAP, PAD,
+    PAD,
 };
 
 impl Render for Gallery {
@@ -13,7 +13,6 @@ impl Render for Gallery {
         Theme::set_current(Theme::resolve(&self.prefs.theme, window.appearance()));
         window.set_window_title(&format!("gallery — {}", self.folder.display()));
 
-        let (_, tile) = self.layout(window);
         let count = self.entries.len();
         let selected = self.selected;
         let density = self.density;
@@ -26,16 +25,14 @@ impl Render for Gallery {
         let can_go_up = self.can_go_up();
         let folder_full: SharedString = self.folder.display().to_string().into();
 
-        let visible: Vec<(usize, &Entry)> = self
-            .entries
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| self.entry_visible(e))
-            .collect();
+        let visible = self.visible_indices();
+        if loading || visible.is_empty() {
+            self.queue_thumbs(std::iter::empty(), window, cx);
+        }
         let visible_count = visible.len();
         let folders = visible
             .iter()
-            .filter(|(_, e)| matches!(e, Entry::Folder(_)))
+            .filter(|&&index| matches!(self.entries[index], Entry::Folder(_)))
             .count();
         let media = visible_count.saturating_sub(folders);
         let status_left = self.status_left(folders, media);
@@ -87,6 +84,7 @@ impl Render for Gallery {
             .on_action(cx.listener(Self::toggle_star))
             .on_action(cx.listener(Self::cycle_theme))
             .on_action(cx.listener(Self::toggle_video_pref))
+            .on_action(cx.listener(Self::show_about))
             .on_action(cx.listener(Self::toggle_search))
             .on_action(cx.listener(Self::reveal_in_finder))
             .on_action(cx.listener(Self::copy_path))
@@ -558,7 +556,8 @@ impl Render for Gallery {
                             .flex_1()
                             .w_full()
                             .relative()
-                            .overflow_y_scroll()
+                            .overflow_hidden()
+                            .min_h_0()
                             .p(px(PAD))
                             .when_some(self.drop_hint, |s, hint| {
                                 let t = Theme::current();
@@ -636,17 +635,7 @@ impl Render for Gallery {
                                 )
                             })
                             .when(!loading && visible_count > 0, |s| {
-                                s.child(
-                                    div()
-                                        .w_full()
-                                        .flex()
-                                        .flex_row()
-                                        .flex_wrap()
-                                        .gap(px(GAP))
-                                        .children(visible.into_iter().map(|(i, entry)| {
-                                            self.render_tile(i, entry, tile, cx)
-                                        })),
-                                )
+                                s.child(self.render_grid(visible, window, cx))
                             }),
                     )
                     .child(
@@ -692,5 +681,6 @@ impl Render for Gallery {
             s.child(self.render_context(window, cx))
         })
         .when(self.toast.is_some(), |s| s.child(self.render_toast(cx)))
+        .when(self.about_open, |s| s.child(self.render_about(cx)))
     }
 }
