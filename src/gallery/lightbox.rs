@@ -3,7 +3,7 @@ use gpui::{
 };
 
 use crate::media::{is_animated, Entry, MediaKind};
-use crate::ui::{btn, Theme};
+use crate::ui::{btn, seg, segmented, Theme};
 
 use super::exif::read_exif;
 use super::viewer::ViewMode;
@@ -21,6 +21,13 @@ impl Gallery {
                 (self.entry_visible(e) && matches!(e, Entry::Media(_))).then_some(i)
             })
             .collect()
+    }
+
+    /// "3 / 120": place among the media shown in the current listing.
+    pub(super) fn media_position(&self, current: usize) -> String {
+        let imgs = self.visible_image_indices();
+        let pos = imgs.iter().position(|&i| i == current).unwrap_or(0);
+        format!("{} / {}", pos + 1, imgs.len())
     }
 
     pub(super) fn filmstrip_indices(&self, current: usize) -> Vec<usize> {
@@ -69,29 +76,19 @@ impl Gallery {
         let mode = self.viewer.mode;
         let animated = is_animated(&item.path);
         let starred = self.is_favorite(&item.path);
-        let meta = format!(
-            "·  {} / {}  ·  {}  ·  {:.0}%{}{}",
-            index + 1,
-            self.entries.len(),
-            mode_label(mode),
-            zoom * 100.0,
-            if slideshow { "  ·  slideshow" } else { "" },
-            if animated {
-                if self.viewer.anim_paused {
-                    "  ·  paused"
-                } else {
-                    "  ·  gif"
-                }
-            } else {
-                ""
-            }
-        );
+        let mut meta = self.media_position(index);
+        if (zoom - 1.0).abs() > 0.01 {
+            meta.push_str(&format!("  ·  {:.0}%", zoom * 100.0));
+        }
+        if slideshow {
+            meta.push_str("  ·  slideshow");
+        }
         let strip = self.filmstrip_indices(index);
         let exif = self.viewer.exif.then(|| read_exif(&item.path));
         let hint = if animated {
-            "Space pause  ·  I info  ·  Esc back"
+            "← → browse  ·  Space pause  ·  I info  ·  Esc back"
         } else {
-            "I info  ·  [ ] rotate  ·  F11 full  ·  Space next  ·  Esc back"
+            "← → browse  ·  I info  ·  [ ] rotate  ·  F11 full screen  ·  Esc back"
         };
 
         div()
@@ -122,6 +119,7 @@ impl Gallery {
                         mode,
                         animated,
                         animated && self.viewer.anim_paused,
+                        strip.len() > 1,
                         cx,
                     ))
                     .when_some(exif, |s, info| s.child(render_exif_panel(&info))),
@@ -181,16 +179,18 @@ impl Gallery {
         let t = Theme::current();
         div()
             .flex()
+            .flex_wrap()
             .items_center()
             .justify_between()
             .px_4()
-            .py_3()
-            .gap_3()
+            .py_2()
+            .gap_x_3()
+            .gap_y_2()
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
+                    .gap_3()
                     .min_w_0()
                     .flex_1()
                     .child(
@@ -208,9 +208,9 @@ impl Gallery {
                     )
                     .child(
                         div()
+                            .flex_shrink_0()
                             .text_sm()
                             .text_color(rgb(t.text_dim))
-                            .overflow_hidden()
                             .whitespace_nowrap()
                             .child(meta.to_string()),
                     ),
@@ -218,110 +218,113 @@ impl Gallery {
             .child(
                 div()
                     .flex()
-                    .gap_1()
-                    .child(btn(
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(segmented().child(seg(
                         "star-btn",
-                        if starred { "★" } else { "☆" },
+                        if starred { "★ Starred" } else { "☆ Star" },
                         starred,
-                        false,
                         cx,
                         |this, _, window, cx| this.toggle_star(&ToggleStar, window, cx),
-                    ))
-                    .child(btn(
-                        "fit-btn",
-                        "Fit",
-                        mode == ViewMode::Fit,
-                        false,
-                        cx,
-                        |this, _, window, cx| this.view_fit(&ViewFit, window, cx),
-                    ))
-                    .child(btn(
-                        "fill-btn",
-                        "Fill",
-                        mode == ViewMode::Fill,
-                        false,
-                        cx,
-                        |this, _, window, cx| this.view_fill(&ViewFill, window, cx),
-                    ))
-                    .child(btn(
-                        "actual-btn",
-                        "100%",
-                        mode == ViewMode::Actual,
-                        false,
-                        cx,
-                        |this, _, window, cx| this.view_actual(&ViewActual, window, cx),
-                    ))
-                    .child(btn(
-                        "full-btn",
-                        if fullscreen { "Window" } else { "Full" },
-                        fullscreen,
-                        false,
-                        cx,
-                        |this, _, window, cx| {
-                            this.toggle_fullscreen(&ToggleFullscreen, window, cx);
-                        },
-                    ))
-                    .child(btn(
-                        "rot-l-btn",
-                        "↺",
-                        false,
-                        false,
-                        cx,
-                        |this, _, window, cx| this.rotate_left(&RotateLeft, window, cx),
-                    ))
-                    .child(btn(
-                        "rot-r-btn",
-                        "↻",
-                        false,
-                        false,
-                        cx,
-                        |this, _, window, cx| this.rotate_right(&RotateRight, window, cx),
-                    ))
-                    .child(btn(
-                        "reveal-btn",
-                        "Reveal",
-                        false,
-                        false,
-                        cx,
-                        |this, _, window, cx| {
-                            this.reveal_in_finder(&RevealInFinder, window, cx);
-                        },
-                    ))
-                    .child(btn(
-                        "copy-path-btn",
-                        "Copy Path",
-                        false,
-                        false,
-                        cx,
-                        |this, _, window, cx| {
-                            this.copy_path(&CopyPath, window, cx);
-                        },
-                    ))
-                    .child(btn(
-                        "trash-btn",
-                        "Trash",
-                        false,
-                        false,
-                        cx,
-                        |this, _, window, cx| {
-                            this.move_to_trash(&MoveToTrash, window, cx);
-                        },
-                    ))
-                    .child(btn(
-                        "slide-btn",
-                        if slideshow { "Stop" } else { "Slideshow" },
-                        slideshow,
-                        false,
-                        cx,
-                        |this, _, window, cx| {
-                            this.toggle_slideshow(&ToggleSlideshow, window, cx);
-                        },
-                    ))
+                    )))
+                    .child(
+                        segmented()
+                            .child(seg(
+                                "fit-btn",
+                                "Fit",
+                                mode == ViewMode::Fit,
+                                cx,
+                                |this, _, window, cx| this.view_fit(&ViewFit, window, cx),
+                            ))
+                            .child(seg(
+                                "fill-btn",
+                                "Fill",
+                                mode == ViewMode::Fill,
+                                cx,
+                                |this, _, window, cx| this.view_fill(&ViewFill, window, cx),
+                            ))
+                            .child(seg(
+                                "actual-btn",
+                                "100%",
+                                mode == ViewMode::Actual,
+                                cx,
+                                |this, _, window, cx| this.view_actual(&ViewActual, window, cx),
+                            )),
+                    )
+                    .child(
+                        segmented()
+                            .child(seg("rot-l-btn", "↺", false, cx, |this, _, window, cx| {
+                                this.rotate_left(&RotateLeft, window, cx)
+                            }))
+                            .child(seg("rot-r-btn", "↻", false, cx, |this, _, window, cx| {
+                                this.rotate_right(&RotateRight, window, cx)
+                            })),
+                    )
+                    .child(
+                        segmented()
+                            .child(seg(
+                                "reveal-btn",
+                                "Reveal",
+                                false,
+                                cx,
+                                |this, _, window, cx| {
+                                    this.reveal_in_finder(&RevealInFinder, window, cx);
+                                },
+                            ))
+                            .child(seg(
+                                "copy-path-btn",
+                                "Copy path",
+                                false,
+                                cx,
+                                |this, _, window, cx| {
+                                    this.copy_path(&CopyPath, window, cx);
+                                },
+                            ))
+                            .child(seg(
+                                "trash-btn",
+                                "Trash",
+                                false,
+                                cx,
+                                |this, _, window, cx| {
+                                    this.move_to_trash(&MoveToTrash, window, cx);
+                                },
+                            )),
+                    )
+                    .child(
+                        segmented()
+                            .child(seg(
+                                "slide-btn",
+                                if slideshow {
+                                    "Stop slideshow"
+                                } else {
+                                    "Slideshow"
+                                },
+                                slideshow,
+                                cx,
+                                |this, _, window, cx| {
+                                    this.toggle_slideshow(&ToggleSlideshow, window, cx);
+                                },
+                            ))
+                            .child(seg(
+                                "full-btn",
+                                if fullscreen {
+                                    "Exit full screen"
+                                } else {
+                                    "Full screen"
+                                },
+                                fullscreen,
+                                cx,
+                                |this, _, window, cx| {
+                                    this.toggle_fullscreen(&ToggleFullscreen, window, cx);
+                                },
+                            )),
+                    )
                     .child(btn(
                         "close-btn",
                         "Close",
                         false,
-                        false,
+                        true,
                         cx,
                         |this, _, _, cx| {
                             this.reset_viewer(cx);
@@ -343,6 +346,7 @@ impl Gallery {
         mode: ViewMode,
         animated: bool,
         paused: bool,
+        can_step: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let still = paused.then(|| self.viewer.still.clone()).flatten();
@@ -413,6 +417,10 @@ impl Gallery {
             .on_mouse_move(cx.listener(Self::on_viewer_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_viewer_up))
             .child(frame)
+            .when(can_step, |s| {
+                s.child(step_arrow("step-prev", "‹", true, cx))
+                    .child(step_arrow("step-next", "›", false, cx))
+            })
             .when(animated, |s| {
                 let t = Theme::current();
                 s.child(
@@ -479,12 +487,40 @@ impl Gallery {
     }
 }
 
-fn mode_label(mode: ViewMode) -> &'static str {
-    match mode {
-        ViewMode::Fit => "fit",
-        ViewMode::Fill => "fill",
-        ViewMode::Actual => "100%",
-    }
+/// Round previous/next control floating over the image edge.
+fn step_arrow(
+    id: &'static str,
+    glyph: &'static str,
+    prev: bool,
+    cx: &Context<Gallery>,
+) -> impl IntoElement {
+    let t = Theme::current();
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .when(prev, |s| s.left_3())
+        .when(!prev, |s| s.right_3())
+        .flex()
+        .items_center()
+        .child(
+            div()
+                .id(id)
+                .size(px(40.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(rgb(t.btn))
+                .text_color(rgb(t.btn_text))
+                .text_xl()
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.btn_hover)).text_color(rgb(t.on_accent)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.step_image(if prev { -1 } else { 1 }, cx);
+                }))
+                .child(glyph),
+        )
 }
 
 fn render_exif_panel(info: &super::exif::ExifInfo) -> impl IntoElement {
