@@ -1,5 +1,8 @@
+use std::{cell::Cell, rc::Rc};
+
 use gpui::{
-    div, img, prelude::*, px, relative, rgb, Context, ImageSource, MouseButton, ObjectFit, Window,
+    canvas, div, img, point, prelude::*, px, relative, rgb, Bounds, Context, ImageSource,
+    MouseButton, ObjectFit, Pixels, Window,
 };
 
 use crate::media::{is_animated, Entry, MediaKind};
@@ -152,7 +155,9 @@ impl Gallery {
             .items_center()
             .justify_center()
             .bg(rgb(t.lightbox))
-            .on_scroll_wheel(cx.listener(Self::on_viewer_scroll))
+            .on_scroll_wheel(cx.listener(|this, event, _, cx| {
+                this.on_viewer_scroll(event, point(px(0.), px(0.)), cx);
+            }))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_viewer_down))
             .child(
                 img(source)
@@ -348,6 +353,8 @@ impl Gallery {
         can_step: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        let bounds: Rc<Cell<Option<Bounds<Pixels>>>> = Rc::new(Cell::new(None));
+        let painted_bounds = bounds.clone();
         let still = paused.then(|| self.viewer.still.clone()).flatten();
         let image = if let Some(frame) = still {
             match mode {
@@ -411,11 +418,23 @@ impl Gallery {
             .w_full()
             .relative()
             .overflow_hidden()
-            .on_scroll_wheel(cx.listener(Self::on_viewer_scroll))
+            .on_scroll_wheel(cx.listener(move |this, event, _, cx| {
+                if let Some(area) = bounds.get() {
+                    this.on_viewer_scroll(event, area.origin, cx);
+                }
+            }))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_viewer_down))
             .on_mouse_move(cx.listener(Self::on_viewer_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_viewer_up))
             .child(frame)
+            .child(
+                canvas(
+                    move |area, _, _| painted_bounds.set(Some(area)),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
             .when(can_step, |s| {
                 s.child(step_arrow("step-prev", "‹", true, cx))
                     .child(step_arrow("step-next", "›", false, cx))
