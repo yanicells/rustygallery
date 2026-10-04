@@ -162,12 +162,6 @@ impl Gallery {
                 .child(div().text_xl().child("📁"))
                 .child(
                     div()
-                        .text_xs()
-                        .text_color(rgb(t.text_muted))
-                        .child("folder"),
-                )
-                .child(
-                    div()
                         .absolute()
                         .top_1()
                         .right_1()

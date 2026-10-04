@@ -1,6 +1,6 @@
 use gpui::{
-    point, px, size, App, Bounds, Context, ImageSource, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, Window,
+    point, px, App, Context, ImageSource, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, ScrollWheelEvent, Window,
 };
 
 use super::{assets, Gallery};
@@ -62,21 +62,14 @@ impl ViewerState {
         self.dragging = false;
         self.anim_paused = false;
     }
-}
 
-pub(crate) fn body_bounds(window: &Window, peek: bool, exif: bool) -> Bounds<Pixels> {
-    let viewport = window.viewport_size();
-    let top = if peek { 0.0 } else { 52.0 };
-    let bottom = if peek { 0.0 } else { 120.0 };
-    let right = if !peek && exif { 240.0 } else { 0.0 };
-    let width: f32 = viewport.width.into();
-    let height: f32 = viewport.height.into();
-    Bounds {
-        origin: point(px(0.), px(top)),
-        size: size(
-            px((width - right).max(80.0)),
-            px((height - top - bottom).max(80.0)),
-        ),
+    /// Keep the image point under the cursor fixed in the rendered body.
+    fn zoom_around(&mut self, zoom: f32, position: Point<Pixels>, origin: Point<Pixels>) {
+        let k = zoom / self.zoom.max(0.01);
+        let local = position - origin;
+        self.pan.x = local.x - (local.x - self.pan.x) * k;
+        self.pan.y = local.y - (local.y - self.pan.y) * k;
+        self.zoom = zoom;
     }
 }
 
@@ -84,7 +77,7 @@ impl Gallery {
     pub(super) fn on_viewer_scroll(
         &mut self,
         event: &ScrollWheelEvent,
-        window: &mut Window,
+        body_origin: Point<Pixels>,
         cx: &mut Context<Self>,
     ) {
         if self.selected.is_none() || self.selected_video_path().is_some() {
@@ -103,12 +96,7 @@ impl Gallery {
             1.0
         };
         let new = (old * factor).clamp(min, 8.0);
-        let k = new / old;
-        let body = body_bounds(window, self.viewer.peek, self.viewer.exif);
-        let local = event.position - body.origin;
-        self.viewer.pan.x = local.x - (local.x - self.viewer.pan.x) * k;
-        self.viewer.pan.y = local.y - (local.y - self.viewer.pan.y) * k;
-        self.viewer.zoom = new;
+        self.viewer.zoom_around(new, event.position, body_origin);
         if self.viewer.mode != ViewMode::Actual && self.viewer.zoom <= 1.01 {
             self.viewer.zoom = 1.0;
             self.viewer.pan = point(px(0.), px(0.));
@@ -180,7 +168,43 @@ impl Gallery {
 
 #[cfg(test)]
 mod tests {
-    use super::ViewMode;
+    use gpui::{point, px};
+
+    use super::{ViewMode, ViewerState};
+
+    #[test]
+    fn zoom_keeps_the_cursor_anchor_after_header_wrapping() {
+        for origin in [
+            point(px(0.), px(52.)),
+            point(px(0.), px(104.)),
+            point(px(24.), px(136.)),
+        ] {
+            let mut viewer = ViewerState {
+                zoom: 2.0,
+                pan: point(px(-20.), px(-30.)),
+                ..ViewerState::default()
+            };
+            // Image coordinate (150, 100) is initially under this cursor.
+            let cursor = origin + point(px(280.), px(170.));
+            viewer.zoom_around(3.0, cursor, origin);
+            assert_eq!(origin.x + viewer.pan.x + px(150.) * viewer.zoom, cursor.x);
+            assert_eq!(origin.y + viewer.pan.y + px(100.) * viewer.zoom, cursor.y);
+        }
+    }
+
+    #[test]
+    fn peek_zoom_out_keeps_the_viewport_cursor_anchor() {
+        let mut viewer = ViewerState {
+            zoom: 2.0,
+            pan: point(px(-20.), px(-30.)),
+            peek: true,
+            ..ViewerState::default()
+        };
+        let cursor = point(px(280.), px(170.));
+        viewer.zoom_around(1.0, cursor, point(px(0.), px(0.)));
+        assert_eq!(viewer.pan.x + px(150.) * viewer.zoom, cursor.x);
+        assert_eq!(viewer.pan.y + px(100.) * viewer.zoom, cursor.y);
+    }
 
     #[test]
     fn actual_is_distinct_from_fit() {

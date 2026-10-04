@@ -473,7 +473,11 @@ mod tests {
         let dir = unique_temp_dir("cache-key-test").unwrap();
         let path = dir.path.join("photo.jpg");
         fs::write(&path, b"same length").unwrap();
-        let file = fs::File::open(&path).unwrap();
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
         let second = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         file.set_times(fs::FileTimes::new().set_modified(second + Duration::from_millis(100)))
             .unwrap();

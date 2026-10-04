@@ -9,7 +9,7 @@ use crate::media::{
     video::{PlaybackState, VideoSnapshot},
     MediaItem,
 };
-use crate::ui::{btn, btn_disabled, Theme};
+use crate::ui::{btn, seg, seg_disabled, segmented, Theme};
 
 use super::super::{Gallery, RenameFocused, ToggleFullscreen, ToggleStar};
 
@@ -81,7 +81,7 @@ impl Gallery {
             .child(self.render_video_controls(snapshot, failed, cx))
             .child(self.render_filmstrip(index, &strip, cx))
             .child(div().px_4().py_2().text_xs().text_color(rgb(t.text_dim))
-                .child("Space play/pause · ← → previous/next · Shift ← → seek · ↑ ↓ volume · M mute · Esc back"))
+                .child("Space play/pause  ·  ← → prev/next  ·  Shift ← → seek  ·  ↑ ↓ volume  ·  M mute  ·  Esc back"))
             .into_any_element()
     }
 
@@ -102,15 +102,16 @@ impl Gallery {
             .justify_between()
             .flex_wrap()
             .px_4()
-            .py_3()
-            .gap_3()
+            .py_2()
+            .gap_x_3()
+            .gap_y_2()
             .child(
                 div()
                     .min_w_0()
                     .flex_1()
                     .flex()
                     .items_center()
-                    .gap_2()
+                    .gap_3()
                     .child(
                         div()
                             .id("video-name")
@@ -124,44 +125,54 @@ impl Gallery {
                             }))
                             .child(item.name.clone()),
                     )
-                    .child(div().text_xs().text_color(rgb(t.text_dim)).child(format!(
-                        "· {} / {} · Video · {status}",
-                        index + 1,
-                        self.entries.len()
-                    ))),
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_sm()
+                            .text_color(rgb(t.text_dim))
+                            .whitespace_nowrap()
+                            .child(format!("{}  ·  {status}", self.media_position(index))),
+                    ),
             )
             .child(
                 div()
                     .flex()
-                    .gap_1()
-                    .child(btn(
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(segmented().child(seg(
                         "video-star",
-                        if starred { "★" } else { "☆" },
+                        if starred { "★ Starred" } else { "☆ Star" },
                         starred,
-                        false,
                         cx,
                         |this, _, window, cx| this.toggle_star(&ToggleStar, window, cx),
-                    ))
-                    .child(btn(
-                        "video-external",
-                        "System player",
-                        false,
-                        false,
-                        cx,
-                        |this, _, window, cx| this.play_in_system(window, cx),
-                    ))
-                    .child(btn(
-                        "video-fullscreen",
-                        if fullscreen { "Window" } else { "Full" },
-                        fullscreen,
-                        false,
-                        cx,
-                        |this, _, window, cx| this.toggle_fullscreen(&ToggleFullscreen, window, cx),
-                    ))
-                    .child(btn(
+                    )))
+                    .child(
+                        segmented()
+                            .child(seg(
+                                "video-external",
+                                "Open in system player",
+                                false,
+                                cx,
+                                |this, _, window, cx| this.play_in_system(window, cx),
+                            ))
+                            .child(seg(
+                                "video-fullscreen",
+                                if fullscreen {
+                                    "Exit full screen"
+                                } else {
+                                    "Full screen"
+                                },
+                                fullscreen,
+                                cx,
+                                |this, _, window, cx| {
+                                    this.toggle_fullscreen(&ToggleFullscreen, window, cx)
+                                },
+                            )),
+                    )
+                    .child(segmented().child(seg(
                         "video-close",
                         "Close",
-                        false,
                         false,
                         cx,
                         |this, _, _, cx| {
@@ -170,7 +181,7 @@ impl Gallery {
                             this.stop_slideshow();
                             cx.notify();
                         },
-                    )),
+                    ))),
             )
     }
 
@@ -220,14 +231,13 @@ impl Gallery {
                             .flex_wrap()
                             .items_center()
                             .gap_2()
-                            .child(btn(
+                            .child(segmented().child(seg(
                                 "video-prev",
-                                "←",
-                                false,
+                                "← Prev",
                                 false,
                                 cx,
                                 |this, _, _, cx| this.step_image(-1, cx),
-                            ))
+                            )))
                             .child(btn(
                                 "video-play",
                                 play_label,
@@ -236,22 +246,30 @@ impl Gallery {
                                 cx,
                                 |this, _, _, cx| this.toggle_video_playback(cx),
                             ))
-                            .child(self.video_seek_button("video-back", "−5s", -5.0, can_seek, cx))
-                            .child(self.video_seek_button(
-                                "video-forward",
-                                "+5s",
-                                5.0,
-                                can_seek,
-                                cx,
-                            ))
-                            .child(btn(
+                            .child(segmented().child(seg(
                                 "video-next",
-                                "→",
-                                false,
+                                "Next →",
                                 false,
                                 cx,
                                 |this, _, _, cx| this.step_image(1, cx),
-                            ))
+                            )))
+                            .child(
+                                segmented()
+                                    .child(self.video_seek_button(
+                                        "video-back",
+                                        "−5s",
+                                        -5.0,
+                                        can_seek,
+                                        cx,
+                                    ))
+                                    .child(self.video_seek_button(
+                                        "video-forward",
+                                        "+5s",
+                                        5.0,
+                                        can_seek,
+                                        cx,
+                                    )),
+                            )
                             .child(div().text_sm().text_color(rgb(t.text_muted)).child(format!(
                                 "{} / {}",
                                 time_label(Some(position)),
@@ -259,40 +277,33 @@ impl Gallery {
                             ))),
                     )
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(btn(
+                        segmented()
+                            .child(seg(
                                 "video-mute",
                                 if muted { "Unmute" } else { "Mute" },
                                 muted,
-                                false,
                                 cx,
                                 |this, _, _, cx| this.toggle_video_mute(cx),
                             ))
-                            .child(btn(
+                            .child(seg(
                                 "video-volume-down",
                                 "−",
-                                false,
                                 false,
                                 cx,
                                 |this, _, _, cx| this.change_video_volume(-0.05, cx),
                             ))
                             .child(
                                 div()
+                                    .w(px(40.))
+                                    .flex()
+                                    .justify_center()
                                     .text_xs()
                                     .text_color(rgb(t.text_muted))
                                     .child(format!("{:.0}%", volume * 100.0)),
                             )
-                            .child(btn(
-                                "video-volume-up",
-                                "+",
-                                false,
-                                false,
-                                cx,
-                                |this, _, _, cx| this.change_video_volume(0.05, cx),
-                            )),
+                            .child(seg("video-volume-up", "+", false, cx, |this, _, _, cx| {
+                                this.change_video_volume(0.05, cx)
+                            })),
                     ),
             )
     }
@@ -306,12 +317,12 @@ impl Gallery {
         cx: &Context<Self>,
     ) -> AnyElement {
         if enabled {
-            btn(id, label, false, false, cx, move |this, _, _, cx| {
+            seg(id, label, false, cx, move |this, _, _, cx| {
                 this.seek_video_by(delta, cx)
             })
             .into_any_element()
         } else {
-            btn_disabled(id, label).into_any_element()
+            seg_disabled(id, label).into_any_element()
         }
     }
 
