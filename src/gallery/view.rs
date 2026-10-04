@@ -1,12 +1,9 @@
 use gpui::{div, prelude::*, px, rgb, Context, ExternalPaths, MouseButton, SharedString, Window};
 
 use crate::media::Entry;
-use crate::ui::{btn, btn_disabled, sidebar_row, Theme, SIDEBAR_W};
+use crate::ui::{btn, sidebar_row, Theme, SIDEBAR_W};
 
-use super::{
-    density::Density, DropHint, Filter, Gallery, GoUp, ToggleFlat, ToggleSaved, ToggleSlideshow,
-    PAD,
-};
+use super::{CycleTheme, DropHint, Gallery, ToggleVideoPref, PAD};
 
 impl Render for Gallery {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -15,15 +12,8 @@ impl Render for Gallery {
 
         let count = self.entries.len();
         let selected = self.selected;
-        let density = self.density;
         let loading = self.loading;
-        let slideshow = self.slideshow;
-        let flat = self.prefs.flat_mode;
-        let saved = self.prefs.is_saved(&self.root);
         let first_run = !self.prefs.seen_open;
-        let crumbs = self.breadcrumb_parts();
-        let can_go_up = self.can_go_up();
-        let folder_full: SharedString = self.folder.display().to_string().into();
 
         let visible = self.visible_indices();
         if loading || visible.is_empty() {
@@ -37,11 +27,7 @@ impl Render for Gallery {
         let media = visible_count.saturating_sub(folders);
         let status_left = self.status_left(folders, media);
         let status_path = self.status_path();
-        let filter = self.filter;
-        let sort = self.sort;
-        let sort_desc = self.sort_desc;
         let search_open = self.search_open;
-        let can_trash = !self.action_paths().is_empty();
 
         let recents = self.prefs.recents.clone();
         let saved_list = self.prefs.saved.clone();
@@ -51,7 +37,11 @@ impl Render for Gallery {
             "system" => "System",
             _ => "Dark",
         };
-        let video_inline = self.prefs.video_inline;
+        let video_label = if self.prefs.video_inline {
+            "Video: in app"
+        } else {
+            "Video: system player"
+        };
         let t = Theme::current();
 
         let root = div()
@@ -185,7 +175,7 @@ impl Render for Gallery {
                                     .px_2()
                                     .text_xs()
                                     .text_color(rgb(t.text_faint))
-                                    .child("SAVED"),
+                                    .child("Saved"),
                             )
                             .when(saved_list.is_empty(), |s| {
                                 s.child(
@@ -193,7 +183,7 @@ impl Render for Gallery {
                                         .px_2()
                                         .text_xs()
                                         .text_color(rgb(t.text_hint))
-                                        .child("Pin a library with Save"),
+                                        .child("Use Save to pin a folder"),
                                 )
                             })
                             .children(saved_list.into_iter().enumerate().map(|(i, path)| {
@@ -226,7 +216,7 @@ impl Render for Gallery {
                                     .px_2()
                                     .text_xs()
                                     .text_color(rgb(t.text_faint))
-                                    .child("RECENT"),
+                                    .child("Recent"),
                             )
                             .children(recents.into_iter().enumerate().map(|(i, path)| {
                                 let label: SharedString = path
@@ -246,6 +236,28 @@ impl Render for Gallery {
                                     },
                                 )
                             })),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(sidebar_row(
+                                "theme",
+                                format!("Theme: {theme_label}").into(),
+                                false,
+                                cx,
+                                |this, _, window, cx| this.cycle_theme(&CycleTheme, window, cx),
+                            ))
+                            .child(sidebar_row(
+                                "video-pref",
+                                video_label.into(),
+                                false,
+                                cx,
+                                |this, _, window, cx| {
+                                    this.toggle_video_pref(&ToggleVideoPref, window, cx);
+                                },
+                            )),
                     ),
             )
             // Main
@@ -256,310 +268,7 @@ impl Render for Gallery {
                     .flex()
                     .flex_col()
                     .min_w_0()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .px_4()
-                            .py_3()
-                            .border_b_1()
-                            .border_color(rgb(t.border))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .gap_3()
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .min_w_0()
-                                            .flex_1()
-                                            .child(if can_go_up {
-                                                btn(
-                                                    "back",
-                                                    "← Back",
-                                                    false,
-                                                    false,
-                                                    cx,
-                                                    |this, _, window, cx| {
-                                                        this.go_up(&GoUp, window, cx);
-                                                    },
-                                                )
-                                                .into_any_element()
-                                            } else {
-                                                btn_disabled("back", "← Back").into_any_element()
-                                            })
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .min_w_0()
-                                                    .child(
-                                                        div()
-                                                            .flex()
-                                                            .items_center()
-                                                            .gap_1()
-                                                            .text_sm()
-                                                            .overflow_hidden()
-                                                            .children(crumbs.into_iter().enumerate().flat_map(|(i, (label, path))| {
-                                                                let t = Theme::current();
-                                                                let mut bits = Vec::new();
-                                                                if i > 0 {
-                                                                    bits.push(
-                                                                        div()
-                                                                            .text_color(rgb(t.text_faint))
-                                                                            .child("/")
-                                                                            .into_any_element(),
-                                                                    );
-                                                                }
-                                                                bits.push(match path {
-                                                                    Some(path) => div()
-                                                                        .id(("crumb", i))
-                                                                        .cursor_pointer()
-                                                                        .text_color(rgb(t.text_dim))
-                                                                        .hover(|s| s.text_color(rgb(t.text)))
-                                                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                                                            this.open_crumb(path.clone(), cx);
-                                                                        }))
-                                                                        .child(label)
-                                                                        .into_any_element(),
-                                                                    None => div()
-                                                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                                                        .child(label)
-                                                                        .into_any_element(),
-                                                                });
-                                                                bits
-                                                            })),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .text_color(rgb(t.text_dim))
-                                                            .overflow_hidden()
-                                                            .whitespace_nowrap()
-                                                            .child(folder_full),
-                                                    ),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(btn(
-                                                "save",
-                                                if saved { "Saved ★" } else { "Save" },
-                                                saved,
-                                                false,
-                                                cx,
-                                                |this, _, window, cx| {
-                                                    this.toggle_saved(&ToggleSaved, window, cx);
-                                                },
-                                            ))
-                                            .child(btn(
-                                                "flat",
-                                                if flat { "Flat" } else { "Folders" },
-                                                flat,
-                                                false,
-                                                cx,
-                                                |this, _, window, cx| {
-                                                    this.toggle_flat(&ToggleFlat, window, cx);
-                                                },
-                                            ))
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .gap_1()
-                                                    .child(btn(
-                                                        "d-s",
-                                                        Density::Small.label(),
-                                                        density == Density::Small,
-                                                        false,
-                                                        cx,
-                                                        |this, _, _, cx| {
-                                                            this.set_density(Density::Small, cx)
-                                                        },
-                                                    ))
-                                                    .child(btn(
-                                                        "d-m",
-                                                        Density::Medium.label(),
-                                                        density == Density::Medium,
-                                                        false,
-                                                        cx,
-                                                        |this, _, _, cx| {
-                                                            this.set_density(Density::Medium, cx)
-                                                        },
-                                                    ))
-                                                    .child(btn(
-                                                        "d-l",
-                                                        Density::Large.label(),
-                                                        density == Density::Large,
-                                                        false,
-                                                        cx,
-                                                        |this, _, _, cx| {
-                                                            this.set_density(Density::Large, cx)
-                                                        },
-                                                    )),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .gap_1()
-                                                    .child(btn(
-                                                        "f-all",
-                                                        "All",
-                                                        filter == Filter::All,
-                                                        false,
-                                                        cx,
-                                                        |this, _, _, cx| {
-                                                            this.set_filter(Filter::All, cx)
-                                                        },
-                                                    ))
-                                                    .child(btn(
-                                                        "f-img",
-                                                        "Images",
-                                                        filter == Filter::Images,
-                                                        false,
-                                                        cx,
-                                                        |this, _, _, cx| {
-                                                            this.set_filter(Filter::Images, cx)
-                                                        },
-                                                    ))
-                                                    .child(btn(
-                                                        "f-vid",
-                                                        "Videos",
-                                                        filter == Filter::Videos,
-                                                        false,
-                                                        cx,
-                                                        |this, _, _, cx| {
-                                                            this.set_filter(Filter::Videos, cx)
-                                                        },
-                                                    ))
-                                                    .child(btn(
-                                                        "f-fav",
-                                                        "Stars",
-                                                        filter == Filter::Favorites,
-                                                        false,
-                                                        cx,
-                                                        |this, _, _, cx| {
-                                                            this.set_filter(Filter::Favorites, cx)
-                                                        },
-                                                    )),
-                                            )
-                                            .child(btn(
-                                                "theme",
-                                                theme_label,
-                                                false,
-                                                false,
-                                                cx,
-                                                |this, _, window, cx| {
-                                                    this.cycle_theme(
-                                                        &super::CycleTheme,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                },
-                                            ))
-                                            .child(btn(
-                                                "video-pref",
-                                                if video_inline {
-                                                    "Video: built-in"
-                                                } else {
-                                                    "Video: system"
-                                                },
-                                                !video_inline,
-                                                false,
-                                                cx,
-                                                |this, _, window, cx| {
-                                                    this.toggle_video_pref(
-                                                        &super::ToggleVideoPref,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                },
-                                            ))
-                                            .child(btn(
-                                                "sort",
-                                                format!(
-                                                    "{} {}",
-                                                    sort.label(),
-                                                    if sort_desc { "↓" } else { "↑" }
-                                                ),
-                                                false,
-                                                false,
-                                                cx,
-                                                |this, _, window, cx| {
-                                                    this.cycle_sort(&super::CycleSort, window, cx);
-                                                },
-                                            ))
-                                            .child(btn(
-                                                "sort-dir",
-                                                if sort_desc { "Desc" } else { "Asc" },
-                                                sort_desc,
-                                                false,
-                                                cx,
-                                                |this, _, window, cx| {
-                                                    this.toggle_sort_dir(
-                                                        &super::ToggleSortDir,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                },
-                                            ))
-                                            .child(btn(
-                                                "search",
-                                                "Search",
-                                                search_open,
-                                                false,
-                                                cx,
-                                                |this, _, window, cx| {
-                                                    this.toggle_search(
-                                                        &super::ToggleSearch,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                },
-                                            ))
-                                            .child(btn(
-                                                "slideshow",
-                                                if slideshow { "Stop" } else { "Slideshow" },
-                                                slideshow,
-                                                false,
-                                                cx,
-                                                |this, _, window, cx| {
-                                                    this.toggle_slideshow(
-                                                        &ToggleSlideshow,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                },
-                                            ))
-                                            .child(if can_trash {
-                                                btn(
-                                                    "trash",
-                                                    "Trash",
-                                                    false,
-                                                    false,
-                                                    cx,
-                                                    |this, _, window, cx| {
-                                                        this.move_to_trash(
-                                                            &super::MoveToTrash,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    },
-                                                )
-                                                .into_any_element()
-                                            } else {
-                                                btn_disabled("trash", "Trash").into_any_element()
-                                            }),
-                                    ),
-                            ),
-                    )
+                    .child(self.render_toolbar(cx))
                     .child(
                         div()
                             .id("grid")
@@ -633,7 +342,7 @@ impl Render for Gallery {
                                             div()
                                                 .text_xs()
                                                 .text_color(rgb(t.text_faint))
-                                                .child("Save a library to pin it. Recents remembers where you were."),
+                                                .child("Folders you open appear under Recent. Use Save to pin one."),
                                         ),
                                 )
                             })

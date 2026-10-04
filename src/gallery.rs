@@ -32,6 +32,7 @@ mod preview;
 mod search;
 mod sort;
 mod toast;
+mod toolbar;
 mod video;
 mod view;
 mod viewer;
