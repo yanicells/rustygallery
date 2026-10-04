@@ -4,12 +4,33 @@
 
 A fast, minimal photo/video gallery built with [GPUI](https://www.gpui.rs).
 
-## Run
+## Requirements on macOS
+
+- macOS 13 or later.
+- Rust's stable toolchain and Cargo.
+- Python 3, used to generate the app icon and bundle metadata.
+- Xcode with its Metal toolchain. Check it with `xcrun -sdk macosx metal --version`. If Metal is missing, run `xcodebuild -downloadComponent MetalToolchain` from an Xcode installation.
+
+## Run locally
+
+Clone the repository, or use your existing checkout:
 
 ```bash
-cargo run --release
-cargo run --release -- ~/Pictures
-./scripts/bundle-macos.sh   # writes dist/gallery.app and dist/gallery.app.zip
+git clone https://github.com/yanicells/rustygallery.git
+cd rustygallery
+```
+
+For development, run the app directly with Cargo:
+
+```bash
+cargo run --locked
+cargo run --locked -- ~/Pictures
+```
+
+For optimized playback and large-library browsing:
+
+```bash
+cargo run --release --locked -- ~/Pictures
 ```
 
 Opens the first available recent or saved folder when no usable path is passed. Otherwise it uses the checkout's `media` directory if present, then Pictures or your home directory. Unavailable libraries and stars remain saved for when their drive reconnects.
@@ -18,9 +39,16 @@ The `.app` lives in the menu bar; Show/Hide, Open Folder, Saved, Recents, and a 
 
 Hiding or closing the window stops video audio and the slideshow. Showing a selected video leaves it paused; press Play to reopen playback.
 
-## Install locally on macOS
+## Build the macOS app
 
-With Rust and Xcode's Metal toolchain installed, run the bundle script above, then:
+From the repository root:
+
+```bash
+./scripts/bundle-macos.sh
+open dist/gallery.app
+```
+
+This creates `dist/gallery.app` and `dist/gallery.app.zip`. To install the app locally:
 
 ```bash
 ditto dist/gallery.app /Applications/gallery.app
@@ -28,6 +56,16 @@ open /Applications/gallery.app
 ```
 
 The script derives the version from Cargo, builds with the lockfile, validates the plist, ad-hoc signs and verifies the completed app, and creates a zip. This is a local build, without Developer ID signing or notarization. No public release or Homebrew download is published by this script; `scripts/gallery.rb` is a future release template.
+
+To build just the executable, run `cargo build --release --locked --bin gallery`; the result is `target/release/gallery`.
+
+## Development checks
+
+```bash
+cargo fmt -- --check
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
+```
 
 ## Keys
 
