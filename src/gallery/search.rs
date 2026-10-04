@@ -10,7 +10,7 @@ impl Gallery {
         let hits = self.search_hits();
         let choice = self.search_choice.min(hits.len().saturating_sub(1));
         let query: SharedString = if self.search_query.is_empty() {
-            "Type a name…".into()
+            "Search this folder by name…".into()
         } else {
             self.search_query.clone().into()
         };
@@ -72,7 +72,7 @@ impl Gallery {
                             div()
                                 .text_xs()
                                 .text_color(rgb(t.text_dim))
-                                .child("No matches in this listing"),
+                                .child("No matching names in this view"),
                         )
                     })
                     .children(hits.into_iter().take(12).enumerate().map(|(row, index)| {

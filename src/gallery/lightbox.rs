@@ -3,7 +3,7 @@ use gpui::{
 };
 
 use crate::media::{is_animated, Entry, MediaKind};
-use crate::ui::{btn, seg, segmented, Theme};
+use crate::ui::{seg, segmented, Theme};
 
 use super::exif::read_exif;
 use super::viewer::ViewMode;
@@ -320,11 +320,10 @@ impl Gallery {
                                 },
                             )),
                     )
-                    .child(btn(
+                    .child(segmented().child(seg(
                         "close-btn",
                         "Close",
                         false,
-                        true,
                         cx,
                         |this, _, _, cx| {
                             this.reset_viewer(cx);
@@ -332,7 +331,7 @@ impl Gallery {
                             this.stop_slideshow();
                             cx.notify();
                         },
-                    )),
+                    ))),
             )
     }
 
