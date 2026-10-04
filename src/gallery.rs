@@ -23,6 +23,7 @@ mod context;
 mod density;
 mod drag;
 mod exif;
+mod favorites;
 mod grid;
 mod lightbox;
 mod loading;
@@ -1029,31 +1030,6 @@ impl Gallery {
         self.dispose_video();
         self.stop_slideshow();
         cx.open_with_system(&path);
-        cx.notify();
-    }
-
-    pub(super) fn is_favorite(&self, path: &std::path::Path) -> bool {
-        self.prefs.is_favorite(path)
-    }
-
-    pub(super) fn toggle_star(&mut self, _: &ToggleStar, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self
-            .selected
-            .or(self.focused)
-            .and_then(|i| self.entries.get(i))
-            .map(|e| e.path().to_path_buf())
-        else {
-            return;
-        };
-        if path.is_dir() {
-            return;
-        }
-        self.prefs.toggle_favorite(&path);
-        cx.notify();
-    }
-
-    pub(super) fn star_path(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
-        self.prefs.toggle_favorite(&path);
         cx.notify();
     }
 

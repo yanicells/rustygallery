@@ -29,7 +29,9 @@ impl Gallery {
     /// "3 / 120": place among the media shown in the current listing.
     pub(super) fn media_position(&self, current: usize) -> String {
         let imgs = self.visible_image_indices();
-        let pos = imgs.iter().position(|&i| i == current).unwrap_or(0);
+        let Some(pos) = imgs.iter().position(|&i| i == current) else {
+            return String::new();
+        };
         format!("{} / {}", pos + 1, imgs.len())
     }
 
